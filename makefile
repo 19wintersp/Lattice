@@ -17,8 +17,8 @@ export PKG_PARSERS =
 export TOOL_PARSER = no
 
 ifneq ($(cjson),no)
-	CJSON_CFLAGS = $(shell pkg-config --silence-errors --cflags libcjson)
-	ifneq ($(CJSON_CFLAGS),)
+	CJSON = $(shell pkg-config --silence-errors --libs libcjson)
+	ifneq ($(CJSON),)
 		TOOL_PARSER = cjson
 		LIB_PARSERS += cjson
 		PKG_PARSERS += libcjson
@@ -26,8 +26,8 @@ ifneq ($(cjson),no)
 endif
 
 ifneq ($(jsonc),no)
-	JSONC_CFLAGS = $(shell pkg-config --silence-errors --cflags json-c)
-	ifneq ($(JSONC_CFLAGS),)
+	JSONC = $(shell pkg-config --silence-errors --libs json-c)
+	ifneq ($(JSONC),)
 		TOOL_PARSER = jsonc
 		LIB_PARSERS += jsonc
 		PKG_PARSERS += json-c
@@ -35,8 +35,8 @@ ifneq ($(jsonc),no)
 endif
 
 ifneq ($(jansson),no)
-	JANSSON_CFLAGS = $(shell pkg-config --silence-errors --cflags jansson)
-	ifneq ($(JANSSON_CFLAGS),)
+	JANSSON = $(shell pkg-config --silence-errors --libs jansson)
+	ifneq ($(JANSSON),)
 		TOOL_PARSER = jansson
 		LIB_PARSERS += jansson
 		PKG_PARSERS += jansson
