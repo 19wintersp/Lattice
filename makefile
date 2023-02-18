@@ -43,6 +43,12 @@ ifneq ($(jansson),no)
 	endif
 endif
 
+ifdef tool
+	ifneq ($(findstring $(tool),$(LIB_PARSERS)),)
+		TOOL_PARSER = $(tool)
+	endif
+endif
+
 export CFLAGS = -Wall -Wextra
 
 .PHONY: all
