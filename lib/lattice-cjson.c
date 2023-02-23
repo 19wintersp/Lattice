@@ -17,26 +17,13 @@ static void lfree(cJSON *obj) {
 
 static cJSON *lcreate(lattice_type type, lattice_value value) {
 	switch (type) {
-		case LATTICE_TYPE_NULL:
-			return cJSON_CreateNull();
-
-		case LATTICE_TYPE_BOOLEAN:
-			return cJSON_CreateBool((cJSON_bool) value.boolean);
-
-		case LATTICE_TYPE_NUMBER:
-			return cJSON_CreateNumber(value.number);
-
-		case LATTICE_TYPE_STRING:
-			return cJSON_CreateString(value.string);
-
-		case LATTICE_TYPE_ARRAY:
-			return cJSON_CreateArray();
-
-		case LATTICE_TYPE_OBJECT:
-			return cJSON_CreateObject();
-
-		default:
-			return NULL;
+		case LATTICE_TYPE_NULL: return cJSON_CreateNull();
+		case LATTICE_TYPE_BOOLEAN: return cJSON_CreateBool(value.boolean);
+		case LATTICE_TYPE_NUMBER: return cJSON_CreateNumber(value.number);
+		case LATTICE_TYPE_STRING: return cJSON_CreateString(value.string);
+		case LATTICE_TYPE_ARRAY: return cJSON_CreateArray();
+		case LATTICE_TYPE_OBJECT: return cJSON_CreateObject();
+		default: return NULL;
 	}
 }
 

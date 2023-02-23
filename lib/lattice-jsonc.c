@@ -33,26 +33,13 @@ static void lfree(struct json_object *obj) {
 
 static struct json_object *lcreate(lattice_type type, lattice_value value) {
 	switch (type) {
-		case LATTICE_TYPE_NULL:
-			return json_object_new_null();
-
-		case LATTICE_TYPE_BOOLEAN:
-			return json_object_new_boolean((json_bool) value.boolean);
-
-		case LATTICE_TYPE_NUMBER:
-			return json_object_new_double(value.number);
-
-		case LATTICE_TYPE_STRING:
-			return json_object_new_string(value.string);
-
-		case LATTICE_TYPE_ARRAY:
-			return json_object_new_array();
-
-		case LATTICE_TYPE_OBJECT:
-			return json_object_new_object();
-
-		default:
-			return NULL;
+		case LATTICE_TYPE_NULL: return json_object_new_null();
+		case LATTICE_TYPE_BOOLEAN: return json_object_new_boolean(value.boolean);
+		case LATTICE_TYPE_NUMBER: return json_object_new_double(value.number);
+		case LATTICE_TYPE_STRING: return json_object_new_string(value.string);
+		case LATTICE_TYPE_ARRAY: return json_object_new_array();
+		case LATTICE_TYPE_OBJECT: return json_object_new_object();
+		default: return NULL;
 	}
 }
 
