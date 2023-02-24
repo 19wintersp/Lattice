@@ -81,26 +81,26 @@ static lattice_iface iface = {
 size_t lattice_cjson(
 	const char *template,
 	const cJSON *root,
-	lattice_opts opts,
-	size_t (*emit)(const char *)
+	size_t (*emit)(const char *data, void *ctx), void *ctx,
+	lattice_opts opts
 ) {
-	return lattice(template, root, iface, opts, emit);
+	return lattice(template, root, emit, ctx, iface, opts);
 }
 
 size_t lattice_cjson_file(
 	const char *template,
 	const cJSON *root,
-	lattice_opts opts,
-	FILE *file
+	FILE *file,
+	lattice_opts opts
 ) {
-	return lattice_file(template, root, iface, opts, file);
+	return lattice_file(template, root, file, iface, opts);
 }
 
 size_t lattice_cjson_buffer(
 	const char *template,
 	const cJSON *root,
-	lattice_opts opts,
-	char **buffer
+	char **buffer,
+	lattice_opts opts
 ) {
-	return lattice_buffer(template, root, iface, opts, buffer);
+	return lattice_buffer(template, root, buffer, iface, opts);
 }
