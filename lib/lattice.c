@@ -60,7 +60,7 @@ struct expr_lexeme {
 	struct expr_lexeme *next;
 };
 
-void free_expr_lexeme(struct expr_lexeme *lex) {
+static void free_expr_lexeme(struct expr_lexeme *lex) {
 	if (lex->next) free_expr_lexeme(lex->next);
 
 	if (lex->type == LEX_STRING) free(lex->data.string);
@@ -120,7 +120,7 @@ struct expr_token {
 	struct expr_token *child, *next;
 };
 
-void free_expr_token(struct expr_token *expr) {
+static void free_expr_token(struct expr_token *expr) {
 	if (expr->child) free_expr_token(expr->child);
 	if (expr->next) free_expr_token(expr->next);
 
@@ -159,7 +159,7 @@ struct token {
 	struct token *prev, *next, *parent, *child;
 };
 
-void free_token(struct token *token) {
+static void free_token(struct token *token) {
 	if (token->child) free_token(token->child);
 	if (token->next) free_token(token->next);
 
