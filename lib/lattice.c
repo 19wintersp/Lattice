@@ -3,6 +3,127 @@
 
 #include <lattice/lattice.h>
 
+struct expr_lexeme {
+	int line;
+	enum {
+		LEX_NULL,
+		LEX_BOOLEAN,
+		LEX_NUMBER,
+		LEX_STRING,
+		LEX_LPAREN,
+		LEX_RPAREN,
+		LEX_LBRACK,
+		LEX_RBRACK,
+		LEX_LBRACE,
+		LEX_RBRACE,
+		LEX_COMMA,
+		LEX_DOT,
+		LEX_COLON,
+		LEX_EITHER,
+		LEX_BOTH,
+		LEX_EQ,
+		LEX_NEQ,
+		LEX_GT,
+		LEX_GTE,
+		LEX_LT,
+		LEX_LTE,
+		LEX_ADD,
+		LEX_SUB,
+		LEX_MUL,
+		LEX_DIV,
+		LEX_QUOT,
+		LEX_MOD,
+		LEX_EXP,
+		LEX_AND,
+		LEX_OR,
+		LEX_NOT,
+		LEX_ROOT,
+		LEX_IDENT,
+	} type;
+	union {
+		bool boolean;
+		double number;
+		char *string;
+		char *ident;
+	} data;
+	struct expr_lexeme *next;
+};
+
+struct expr_token {
+	int line;
+	enum {
+		EXPR_NULL,
+		EXPR_BOOLEAN,
+		EXPR_NUMBER,
+		EXPR_STRING,
+		EXPR_ARRAY,
+		EXPR_OBJECT,
+		EXPR_OBJECT_ITEM,
+		EXPR_EITHER,
+		EXPR_BOTH,
+		EXPR_EQ,
+		EXPR_NEQ,
+		EXPR_GT,
+		EXPR_GTE,
+		EXPR_LT,
+		EXPR_LTE,
+		EXPR_ADD,
+		EXPR_SUB,
+		EXPR_MUL,
+		EXPR_DIV,
+		EXPR_QUOT,
+		EXPR_MOD,
+		EXPR_EXP,
+		EXPR_AND,
+		EXPR_OR,
+		EXPR_XOR,
+		EXPR_NOT,
+		EXPR_NEG,
+		EXPR_POS,
+		EXPR_ROOT,
+		EXPR_IDENT,
+		EXPR_LOOKUP,
+		EXPR_METHOD,
+		EXPR_INDEX,
+	} type;
+	union {
+		bool boolean;
+		double number;
+		char *string;
+		char *ident;
+		struct expr_token *expr;
+	} item;
+	union {
+		char *ident;
+		struct expr_token *expr;
+	} item2;
+	struct expr_token *child, *next;
+};
+
+struct token {
+	int line;
+	enum {
+		TOKEN_SPAN,
+		TOKEN_SUB_ESC,
+		TOKEN_SUB_RAW,
+		TOKEN_INCLUDE,
+		TOKEN_IF,
+		TOKEN_ELIF,
+		TOKEN_ELSE,
+		TOKEN_SWITCH,
+		TOKEN_CASE,
+		TOKEN_DEFAULT,
+		TOKEN_FOR_RANGE_EXC,
+		TOKEN_FOR_RANGE_INC,
+		TOKEN_FOR_ITER,
+		TOKEN_WITH,
+		TOKEN_END,
+	} type;
+	char *ident;
+	struct expr_token *expr, *expr2;
+	struct token *prev, *next, *parent, *child;
+};
+
 static size_t file_emit(const char *data, void *file) {
 	return fputs(data, (FILE *) file) == EOF ? 0 : 1;
 }
