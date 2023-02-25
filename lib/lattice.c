@@ -60,6 +60,15 @@ struct expr_lexeme {
 	struct expr_lexeme *next;
 };
 
+void free_expr_lexeme(struct expr_lexeme *lex) {
+	if (lex->next) free_expr_lexeme(lex->next);
+
+	if (lex->type == LEX_STRING) free(lex->data.string);
+	if (lex->type == LEX_IDENT) free(lex->data.ident);
+
+	free(lex);
+}
+
 struct expr_token {
 	int line;
 	enum {
@@ -111,6 +120,21 @@ struct expr_token {
 	struct expr_token *child, *next;
 };
 
+void free_expr_token(struct expr_token *expr) {
+	if (expr->child) free_expr_token(expr->child);
+	if (expr->next) free_expr_token(expr->next);
+
+	if (expr->type == EXPR_STRING) free(expr->item.string);
+	else if (expr->type == EXPR_IDENT) free(expr->item.ident);
+	else if (expr->item.expr) free_expr_token(expr->item.expr);
+
+	if (expr->type == EXPR_LOOKUP || expr->type == EXPR_METHOD)
+		free(expr->item.ident);
+	else if (expr->item.expr) free_expr_token(expr->item2.expr);
+
+	free(expr);
+}
+
 struct token {
 	int line;
 	enum {
@@ -134,6 +158,17 @@ struct token {
 	struct expr_token *expr, *expr2;
 	struct token *prev, *next, *parent, *child;
 };
+
+void free_token(struct token *token) {
+	if (token->child) free_token(token->child);
+	if (token->next) free_token(token->next);
+
+	free(token->ident);
+	if (token->expr) free_expr_token(token->expr);
+	if (token->expr2) free_expr_token(token->expr2);
+
+	free(token);
+}
 
 static size_t file_emit(const char *data, void *file) {
 	return fputs(data, (FILE *) file) == EOF ? 0 : 1;
