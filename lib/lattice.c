@@ -3,6 +3,17 @@
 
 #include <lattice/lattice.h>
 
+static lattice_error error;
+
+static void set_error(lattice_error new_error) {
+	if (error.message) free(error.message);
+	error = new_error;
+}
+
+const lattice_error *lattice_get_error() {
+	return &error;
+}
+
 struct expr_lexeme {
 	int line;
 	enum {
