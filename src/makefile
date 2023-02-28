@@ -18,7 +18,6 @@ else
 endif
 
 CFLAGS += -I../include
-LDFLAGS = -L../lib/build
 
 .PHONY: all
 all: build $(BIN)
@@ -35,8 +34,8 @@ install: all
 clean:
 	@rm -rf build/ || true
 
-$(BIN): $(OBJS)
-	$(CC) $(LDFLAGS) $(shell pkg-config --libs $(TOOL_PKG)) -o $@ $^
+$(BIN): $(OBJS) ../lib/build/$(NAME)-$(TOOL_PARSER).o ../lib/build/$(NAME).o
+	$(CC) $(shell pkg-config --libs $(TOOL_PKG)) -o $@ $^
 
 build/%.o: %.c
-	$(CC) -c $(CFLAGS) -o $@ $<
+	$(CC) -c $(CFLAGS) $(shell pkg-config --cflags $(TOOL_PKG)) -o $@ $<

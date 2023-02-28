@@ -49,8 +49,8 @@ $(CORE_SO): $(CORE_OBJS)
 SO_LIB = $(patsubst build/lattice-%.o,%,$<)
 SO_PKG = $(word $(call pos,$(SO_LIB),$(LIB_PARSERS)),$(PKG_PARSERS))
 
-build/lib$(SO_NAME)-%$(SO_SUFFIX): build/lattice-%.o
-	$(CC) -shared $(shell pkg-config --libs $(SO_PKG)) -o $@ $<
+build/lib$(SO_NAME)-%$(SO_SUFFIX): build/lattice-%.o $(CORE_OBJS)
+	$(CC) -shared $(shell pkg-config --libs $(SO_PKG)) -o $@ $^
 
 build/lattice.o: lattice.c
 	$(CC) -c $(CFLAGS) -o $@ $<
