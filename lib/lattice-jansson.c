@@ -64,6 +64,7 @@ static lattice_value lvalue(const json_t *obj) {
 			break;
 
 		default:
+			break;
 	}
 
 	return value;
@@ -97,6 +98,7 @@ static void ladd(json_t *obj, const char *key, json_t *value) {
 			break;
 
 		default:
+			break;
 	}
 }
 
