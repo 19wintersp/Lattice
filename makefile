@@ -49,6 +49,7 @@ ifdef tool
 	endif
 endif
 
+export CC := clang
 export CFLAGS = -Wall -Wextra
 
 .PHONY: all
