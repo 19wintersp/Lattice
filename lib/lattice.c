@@ -1,12 +1,42 @@
+#include <ctype.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include <lattice/lattice.h>
 
+static char *astrdup(const char *src) {
+	char *clone = malloc(strlen(src) + 1);
+	strcpy(clone, src); return clone;
+}
+
+static char *astrndup(const char *src, size_t n) {
+	char *clone = malloc(n + 1); clone[n] = 0;
+	strncpy(clone, src, n); return clone;
+}
+
+static char *format(const char *fmt, ...) {
+	va_list list1;
+	va_start(list1, fmt);
+
+	va_list list2;
+	va_copy(list2, list1);
+
+	int length = vsnprintf(NULL, 0, fmt, list1);
+	va_end(list1);
+
+	char* buffer = malloc(length + 1);
+	vsnprintf(buffer, length + 1, fmt, list2);
+	va_end(list2);
+
+	return buffer;
+}
+
 static lattice_error error;
 
 static void set_error(lattice_error new_error) {
-	if (error.message) free(error.message);
+	free(error.message);
 	error = new_error;
 }
 
@@ -168,6 +198,268 @@ static void free_token(struct token *token) {
 	if (token->expr2) free_expr_token(token->expr2);
 
 	free(token);
+}
+
+#define LEX_ADD(ty) \
+	lex = calloc(1, sizeof(struct expr_lexeme)); \
+	*lexp = lex; lexp = &lex->next; \
+	lex->line = *line; lex->type = ty;
+#define LEX_SUBCASE(ch, ty) if (expr[s] == ch) { LEX_ADD(ty); s++; break; }
+#define LEX_CP(ch, ty) LEX_SUBCASE(ch, ty)
+#define LEX_CPW(...) __VA_OPT__(LEX_CP(__VA_ARGS__))
+#define LEX_CASE(ch, ty, ...) case ch: LEX_CPW(__VA_ARGS__) LEX_ADD(ty); break;
+
+static size_t lex_expr(
+	const char *expr,
+	const char *term,
+	int *line,
+	struct expr_lexeme **lexp
+) {
+	size_t s = 0;
+	size_t tlen = term ? strlen(term) : 0;
+
+	struct expr_lexeme *lex = NULL;
+	int brackets = 0;
+
+	while (
+		expr[s] &&
+		(!term || brackets > 0 || strncmp(expr + s, term, tlen) != 0)
+	) {
+		char c = expr[s++];
+		switch (c) {
+			case '\n':
+				(*line)++;
+				break;
+
+			LEX_CASE('(', LEX_LPAREN);
+			LEX_CASE(')', LEX_RPAREN);
+			LEX_CASE('[', LEX_LBRACK);
+			LEX_CASE(']', LEX_RBRACK);
+			LEX_CASE('{', LEX_LBRACE);
+			LEX_CASE('}', LEX_RBRACE);
+			LEX_CASE(',', LEX_COMMA);
+			LEX_CASE('.', LEX_DOT);
+			LEX_CASE(':', LEX_COLON);
+			LEX_CASE('|', LEX_OR, '|', LEX_EITHER);
+			LEX_CASE('&', LEX_AND, '&', LEX_BOTH);
+			LEX_CASE('=', LEX_EQ, '=', LEX_EQ);
+			LEX_CASE('!', LEX_NOT, '=', LEX_NEQ);
+			LEX_CASE('>', LEX_GT, '=', LEX_GTE);
+			LEX_CASE('<', LEX_LT, '=', LEX_LTE);
+			LEX_CASE('+', LEX_ADD);
+			LEX_CASE('-', LEX_SUB);
+			LEX_CASE('*', LEX_MUL, '*', LEX_EXP);
+			LEX_CASE('/', LEX_DIV, '/', LEX_QUOT);
+			LEX_CASE('%', LEX_MOD);
+			LEX_CASE('@', LEX_ROOT);
+
+			case '"':
+			case '\'': {}
+				char quote = c;
+
+				char *contents = malloc(1);
+				size_t length = 0;
+
+				while ((c = expr[s++]) != quote) {
+					size_t i = length++;
+					contents = realloc(contents, length);
+					contents[i] = c;
+
+					if (c == '\\') {
+						switch (expr[s++]) {
+							case 'a':  contents[i] = '\a'; break;
+							case 'b':  contents[i] = '\b'; break;
+							case 'e':  contents[i] = '\e'; break;
+							case 'f':  contents[i] = '\f'; break;
+							case 'n':  contents[i] = '\n'; break;
+							case 'r':  contents[i] = '\r'; break;
+							case 't':  contents[i] = '\t'; break;
+							case 'v':  contents[i] = '\v'; break;
+							case '\\': contents[i] = '\\'; break;
+							case '\'': contents[i] = '\''; break;
+							case '\"': contents[i] = '\"'; break;
+
+							case 'x': {}
+								char hi = expr[s++];
+								char lo = expr[s++];
+
+								if (!isxdigit(hi) || !isxdigit(lo)) {
+									set_error((lattice_error) {
+										.line = *line,
+										.code = LATTICE_SYNTAX_ERROR,
+										.message = astrdup("invalid hex literal"),
+									});
+
+									free(contents);
+									return 0;
+								}
+
+								hi = hi <= '9' ? hi - '0' : 10 + tolower(hi) - 'a';
+								lo = lo <= '9' ? lo - '0' : 10 + tolower(lo) - 'a';
+
+								contents[i] = hi << 4 | lo;
+
+								break;
+
+							default:
+								set_error((lattice_error) {
+									.line = *line,
+									.code = LATTICE_SYNTAX_ERROR,
+									.message = format("invalid string escape '%c'", expr[s - 1]),
+								});
+
+								free(contents);
+								return 0;
+						}
+					}
+				}
+
+				contents[length] = 0;
+
+				LEX_ADD(LEX_STRING);
+				lex->data.string = contents;
+
+				break;
+
+			default:
+				if (isdigit(c)) {
+					const char *start = expr + s - 1;
+					int base = 10;
+					double number = (double) (c - '0');
+
+					if (c == '0') {
+						switch (expr[s]) {
+							case 'b': base = 2; break;
+							case 'o': base = 8; break;
+							case 'x': base = 16; break;
+
+							default:
+								if (isdigit(expr[s])) {
+									set_error((lattice_error) {
+										.line = *line,
+										.code = LATTICE_SYNTAX_ERROR,
+										.message = astrdup("decimal literal with leading zero"),
+									});
+
+									return 0;
+								}
+						}
+
+						if (base != 10) s++;
+					}
+
+					int dbase = base > 10 ? 10 : base;
+
+					while (
+						(base == 16 && isxdigit(expr[s])) ||
+						('0' <= expr[s] && expr[s] < '0' + dbase)
+					) {
+						number *= base;
+						number += expr[s] <= '9'
+							? expr[s] - '0'
+							: 10 + tolower(expr[s]) - 'a';
+
+						s++;
+					}
+
+					if (base == 10) {
+						if (expr[s] == '.') {
+							s++;
+
+							while (isdigit(expr[s])) s++;
+						}
+
+						if (expr[s] == 'E' || expr[s] == 'e') {
+							s++;
+
+							if (expr[s] == '+' || expr[s] == '-') s++;
+
+							size_t peds = s;
+							while (isdigit(expr[s])) s++;
+
+							if (s == peds) {
+								set_error((lattice_error) {
+									.line = *line,
+									.code = LATTICE_SYNTAX_ERROR,
+									.message = astrdup("exponent cannot be empty"),
+								});
+
+								return 0;
+							}
+						}
+
+						char *lit_clone = astrndup(start, expr + s - start);
+						number = atof(lit_clone);
+						free(lit_clone);
+					}
+
+					if (!expr[s] || ispunct(expr[s]) || isspace(expr[s])) {
+						LEX_ADD(LEX_NUMBER);
+						lex->data.number = number;
+					} else {
+						set_error((lattice_error) {
+							.line = *line,
+							.code = LATTICE_SYNTAX_ERROR,
+							.message = format("unexpected character '%c'", expr[s]),
+						});
+
+						return 0;
+					}
+				} else if (isalpha(c) || c == '_') {
+					const char *start = expr + s - 1;
+					while (isalnum(expr[s]) || expr[s] == '_') s++;
+
+					char *ident = astrndup(start, expr + s - start);
+					if (strcmp(ident, "null") == 0) {
+						LEX_ADD(LEX_NULL);
+					} else if (strcmp(ident, "true") == 0) {
+						LEX_ADD(LEX_BOOLEAN);
+						lex->data.boolean = true;
+					} else if (strcmp(ident, "false") == 0) {
+						LEX_ADD(LEX_BOOLEAN);
+						lex->data.boolean = false;
+					} else {
+						LEX_ADD(LEX_IDENT);
+						lex->data.ident = ident;
+					}
+
+					if (lex->type != LEX_IDENT) free(ident);
+				} else if (!isspace(c)) {
+					set_error((lattice_error) {
+						.line = *line,
+						.code = LATTICE_SYNTAX_ERROR,
+						.message = format("unexpected character '%c'", c),
+					});
+
+					return 0;
+				}
+
+				break;
+		}
+
+		if (lex) {
+			switch (lex->type) {
+				case LEX_LPAREN:
+				case LEX_LBRACK:
+				case LEX_LBRACE:
+					brackets++;
+					break;
+
+				case LEX_RPAREN:
+				case LEX_RBRACK:
+				case LEX_RBRACE:
+					brackets--;
+					break;
+
+				default:
+					break;
+			}
+
+			lex = NULL;
+		}
+	}
+
+	return s;
 }
 
 static size_t file_emit(const char *data, void *file) {
