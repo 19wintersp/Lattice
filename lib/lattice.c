@@ -46,7 +46,7 @@ const lattice_error *lattice_get_error() {
 
 struct expr_lexeme {
 	int line;
-	enum {
+	enum expr_lexeme_type {
 		LEX_NULL,
 		LEX_BOOLEAN,
 		LEX_NUMBER,
@@ -101,7 +101,7 @@ static void free_expr_lexeme(struct expr_lexeme *lex) {
 
 struct expr_token {
 	int line;
-	enum {
+	enum expr_token_type {
 		EXPR_NULL,
 		EXPR_BOOLEAN,
 		EXPR_NUMBER,
@@ -167,7 +167,7 @@ static void free_expr_token(struct expr_token *expr) {
 
 struct token {
 	int line;
-	enum {
+	enum token_type {
 		TOKEN_SPAN,
 		TOKEN_SUB_ESC,
 		TOKEN_SUB_RAW,
