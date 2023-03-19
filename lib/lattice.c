@@ -602,8 +602,8 @@ static struct {
 	enum expr_lexeme_type lex;
 	enum expr_token_type expr;
 } unary_op[] = {
-	{ LEX_ADD,  EXPR_ADD },
-	{ LEX_SUB,  EXPR_SUB },
+	{ LEX_ADD,  EXPR_POS },
+	{ LEX_SUB,  EXPR_NEG },
 	{ LEX_NOT,  EXPR_NOT },
 	{ LEX_COMP, EXPR_COMP },
 };
