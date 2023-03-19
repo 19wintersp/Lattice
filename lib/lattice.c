@@ -94,7 +94,8 @@ struct expr_lexeme {
 };
 
 static void free_expr_lexeme(struct expr_lexeme *lex) {
-	if (lex->next) free_expr_lexeme(lex->next);
+	if (lex == NULL) return;
+	free_expr_lexeme(lex->next);
 
 	if (lex->type == LEX_STRING) free(lex->data.string);
 	if (lex->type == LEX_IDENT) free(lex->data.ident);
@@ -156,13 +157,16 @@ static void free_expr_token(struct expr_token *expr) {
 
 	if (expr->type == EXPR_STRING) free(expr->item[0].string);
 	else if (expr->type == EXPR_IDENT) free(expr->item[0].ident);
-	else if (expr->item[0].expr) free_expr_token(expr->item[0].expr);
+	else if (
+		expr->type != EXPR_BOOLEAN &&
+		expr->type != EXPR_NUMBER
+	) free_expr_token(expr->item[0].expr);
 
 	if (expr->type == EXPR_LOOKUP || expr->type == EXPR_METHOD)
 		free(expr->item[1].ident);
-	else if (expr->item[1].expr) free_expr_token(expr->item[1].expr);
+	else free_expr_token(expr->item[1].expr);
 
-	if (expr->item[2].expr) free_expr_token(expr->item[2].expr);
+	free_expr_token(expr->item[2].expr);
 
 	free(expr);
 }
