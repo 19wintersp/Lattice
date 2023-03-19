@@ -110,7 +110,6 @@ struct expr_token {
 		EXPR_STRING,
 		EXPR_ARRAY,
 		EXPR_OBJECT,
-		EXPR_OBJECT_ITEM,
 		EXPR_EITHER,
 		EXPR_BOTH,
 		EXPR_EQ,
@@ -138,6 +137,7 @@ struct expr_token {
 		EXPR_LOOKUP,
 		EXPR_METHOD,
 		EXPR_INDEX,
+		EXPR_TERNARY,
 	} type;
 	union {
 		bool boolean;
@@ -150,20 +150,20 @@ struct expr_token {
 		char *ident;
 		struct expr_token *expr;
 	} item2;
-	struct expr_token *child, *next;
+	struct expr_token *next;
 };
 
 static void free_expr_token(struct expr_token *expr) {
-	if (expr->child) free_expr_token(expr->child);
-	if (expr->next) free_expr_token(expr->next);
+	if (!expr) return;
+	free_expr_token(expr->next);
 
 	if (expr->type == EXPR_STRING) free(expr->item.string);
 	else if (expr->type == EXPR_IDENT) free(expr->item.ident);
 	else if (expr->item.expr) free_expr_token(expr->item.expr);
 
 	if (expr->type == EXPR_LOOKUP || expr->type == EXPR_METHOD)
-		free(expr->item.ident);
-	else if (expr->item.expr) free_expr_token(expr->item2.expr);
+		free(expr->item2.ident);
+	else if (expr->item2.expr) free_expr_token(expr->item2.expr);
 
 	free(expr);
 }
