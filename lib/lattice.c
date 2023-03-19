@@ -597,7 +597,7 @@ static struct expr_token *parse_call(struct expr_lexeme **lexp) {
 static struct {
 	enum expr_lexeme_type lex;
 	enum expr_token_type expr;
-} binary_op[] = {
+} unary_op[] = {
 	{ LEX_ADD,  EXPR_ADD },
 	{ LEX_SUB,  EXPR_SUB },
 	{ LEX_NOT,  EXPR_NOT },
@@ -608,12 +608,12 @@ static struct expr_token *parse_unary(struct expr_lexeme **lexp) {
 	struct expr_lexeme *lex;
 	struct expr_token *tok;
 
-	for (int i = 0; i < sizeof(binary_op) / sizeof(binary_op[0]); i++) {
-		if (PARSE_MATCH(binary_op[i].lex)) {
+	for (size_t i = 0; i < sizeof(unary_op) / sizeof(unary_op[0]); i++) {
+		if (PARSE_MATCH(unary_op[i].lex)) {
 			tok = parse_unary(lexp);
 			if (!tok) return NULL;
 
-			PARSE_TOK(.type = binary_op[i].expr, .item.expr = tok);
+			PARSE_TOK(.type = unary_op[i].expr, .item.expr = tok);
 			return tok;
 		}
 	}
@@ -646,7 +646,7 @@ static struct {
 	{ LEX_MOD,  EXPR_MOD },
 };
 
-static struct expr_token *parse_binary(struct expr_lexeme **lexp, int prec) {
+static struct expr_token *parse_binary(struct expr_lexeme **lexp, size_t prec) {
 	if (prec >= sizeof(binary_op_prec) / sizeof(binary_op_prec[0]))
 		return parse_unary(lexp);
 
@@ -674,7 +674,8 @@ static struct expr_token *parse_binary(struct expr_lexeme **lexp, int prec) {
 
 		break;
 
-parse_binary_continue:
+	parse_binary_continue:
+		continue;
 	}
 
 	return tok;
