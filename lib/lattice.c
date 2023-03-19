@@ -146,11 +146,7 @@ struct expr_token {
 		char *string;
 		char *ident;
 		struct expr_token *expr;
-	} item;
-	union {
-		char *ident;
-		struct expr_token *expr;
-	} item2;
+	} item[3];
 	struct expr_token *next;
 };
 
@@ -158,13 +154,15 @@ static void free_expr_token(struct expr_token *expr) {
 	if (!expr) return;
 	free_expr_token(expr->next);
 
-	if (expr->type == EXPR_STRING) free(expr->item.string);
-	else if (expr->type == EXPR_IDENT) free(expr->item.ident);
-	else if (expr->item.expr) free_expr_token(expr->item.expr);
+	if (expr->type == EXPR_STRING) free(expr->item[0].string);
+	else if (expr->type == EXPR_IDENT) free(expr->item[0].ident);
+	else if (expr->item[0].expr) free_expr_token(expr->item[0].expr);
 
 	if (expr->type == EXPR_LOOKUP || expr->type == EXPR_METHOD)
-		free(expr->item2.ident);
-	else if (expr->item2.expr) free_expr_token(expr->item2.expr);
+		free(expr->item[1].ident);
+	else if (expr->item[1].expr) free_expr_token(expr->item[1].expr);
+
+	if (expr->item[2].expr) free_expr_token(expr->item[2].expr);
 
 	free(expr);
 }
@@ -189,7 +187,7 @@ struct token {
 		TOKEN_END,
 	} type;
 	char *ident;
-	struct expr_token *expr, *expr2;
+	struct expr_token *expr[2];
 	struct token *prev, *next, *parent, *child;
 };
 
@@ -198,8 +196,8 @@ static void free_token(struct token *token) {
 	if (token->next) free_token(token->next);
 
 	free(token->ident);
-	if (token->expr) free_expr_token(token->expr);
-	if (token->expr2) free_expr_token(token->expr2);
+	if (token->expr[0]) free_expr_token(token->expr[0]);
+	if (token->expr[1]) free_expr_token(token->expr[1]);
 
 	free(token);
 }
@@ -492,17 +490,17 @@ static struct expr_token *parse_primary(struct expr_lexeme **lexp) {
 	}
 
 	if (PARSE_MATCH(LEX_BOOLEAN)) {
-		PARSE_TOK(.type = EXPR_BOOLEAN, .item.boolean = lex->data.boolean);
+		PARSE_TOK(.type = EXPR_BOOLEAN, .item[0].boolean = lex->data.boolean);
 		return tok;
 	}
 
 	if (PARSE_MATCH(LEX_NUMBER)) {
-		PARSE_TOK(.type = EXPR_NUMBER, .item.number = lex->data.number);
+		PARSE_TOK(.type = EXPR_NUMBER, .item[0].number = lex->data.number);
 		return tok;
 	}
 
 	if (PARSE_MATCH(LEX_STRING)) {
-		PARSE_TOK(.type = EXPR_STRING, .item.string = lex->data.string);
+		PARSE_TOK(.type = EXPR_STRING, .item[0].string = lex->data.string);
 		lex->data.string = NULL;
 		return tok;
 	}
@@ -513,7 +511,7 @@ static struct expr_token *parse_primary(struct expr_lexeme **lexp) {
 	}
 
 	if (PARSE_MATCH(LEX_IDENT)) {
-		PARSE_TOK(.type = EXPR_IDENT, .item.ident = lex->data.ident);
+		PARSE_TOK(.type = EXPR_IDENT, .item[0].ident = lex->data.ident);
 		lex->data.ident = NULL;
 		return tok;
 	}
@@ -541,7 +539,9 @@ static struct expr_token *parse_call(struct expr_lexeme **lexp) {
 		if (PARSE_MATCH(LEX_DOT)) {
 			if (PARSE_MATCH(LEX_IDENT)) {
 				PARSE_TOK(
-					.type = EXPR_LOOKUP, .item.expr = tok, .item2.ident = lex->data.ident
+					.type = EXPR_LOOKUP,
+					.item[0].expr = tok,
+					.item[1].ident = lex->data.ident
 				);
 				lex->data.ident = NULL;
 
@@ -571,7 +571,7 @@ static struct expr_token *parse_call(struct expr_lexeme **lexp) {
 					}
 
 					tok->type = EXPR_METHOD;
-					tok->item.expr = arg;
+					tok->item[2].expr = arg;
 				}
 
 				break;
@@ -587,7 +587,7 @@ static struct expr_token *parse_call(struct expr_lexeme **lexp) {
 				return NULL;
 			}
 
-			PARSE_TOK(.type = EXPR_INDEX, .item.expr = tok, .item2.expr = index);
+			PARSE_TOK(.type = EXPR_INDEX, .item[0].expr = tok, .item[1].expr = index);
 		} else break;
 	}
 
@@ -613,7 +613,7 @@ static struct expr_token *parse_unary(struct expr_lexeme **lexp) {
 			tok = parse_unary(lexp);
 			if (!tok) return NULL;
 
-			PARSE_TOK(.type = unary_op[i].expr, .item.expr = tok);
+			PARSE_TOK(.type = unary_op[i].expr, .item[0].expr = tok);
 			return tok;
 		}
 	}
@@ -659,11 +659,11 @@ static struct expr_token *parse_binary(struct expr_lexeme **lexp, size_t prec) {
 			if (PARSE_MATCH(binary_op[i].lex)) {
 				PARSE_TOK(
 					.type = binary_op[i].expr,
-					.item.expr = tok,
-					.item2.expr = parse_binary(lexp, prec + 1)
+					.item[0].expr = tok,
+					.item[1].expr = parse_binary(lexp, prec + 1)
 				);
 
-				if (!tok->item2.expr) {
+				if (!tok->item[1].expr) {
 					free_expr_token(tok);
 					return NULL;
 				}
@@ -687,17 +687,32 @@ static struct expr_token *parse_expr(struct expr_lexeme **lexp) {
 	if (!tok) return NULL;
 
 	if (PARSE_MATCH(LEX_OPT)) {
-		struct expr_token *branch = parse_binary(lexp, 0);
+		struct expr_token *branch1 = parse_binary(lexp, 0);
+		if (!branch1) {
+			free_expr_token(tok);
+			return NULL;
+		}
 
 		if (!PARSE_MATCH(LEX_COLON)) {
 			free_expr_token(tok);
-			free_expr_token(branch);
+			free_expr_token(branch1);
 			PARSE_ERR("expected colon for ternary");
 			return NULL;
 		}
 
-		branch->next = parse_binary(lexp, 0);
-		PARSE_TOK(.type = EXPR_TERNARY, .item.expr = tok, .item2.expr = branch);
+		struct expr_token *branch2 = parse_binary(lexp, 0);
+		if (!branch2) {
+			free_expr_token(tok);
+			free_expr_token(branch1);
+			return NULL;
+		}
+
+		PARSE_TOK(
+			.type = EXPR_TERNARY,
+			.item[0].expr = tok,
+			.item[1].expr = branch1,
+			.item[2].expr = branch2
+		);
 	}
 
 	return tok;
