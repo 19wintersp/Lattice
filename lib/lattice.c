@@ -62,6 +62,7 @@ struct expr_lexeme {
 		LEX_COLON,
 		LEX_EITHER,
 		LEX_BOTH,
+		LEX_NOT,
 		LEX_EQ,
 		LEX_NEQ,
 		LEX_GT,
@@ -77,7 +78,8 @@ struct expr_lexeme {
 		LEX_EXP,
 		LEX_AND,
 		LEX_OR,
-		LEX_NOT,
+		LEX_XOR,
+		LEX_COMP,
 		LEX_ROOT,
 		LEX_IDENT,
 	} type;
@@ -127,6 +129,7 @@ struct expr_token {
 		EXPR_AND,
 		EXPR_OR,
 		EXPR_XOR,
+		EXPR_COMP,
 		EXPR_NOT,
 		EXPR_NEG,
 		EXPR_POS,
@@ -242,6 +245,8 @@ static size_t lex_expr(
 			LEX_CASE(':', LEX_COLON);
 			LEX_CASE('|', LEX_OR, '|', LEX_EITHER);
 			LEX_CASE('&', LEX_AND, '&', LEX_BOTH);
+			LEX_CASE('^', LEX_XOR);
+			LEX_CASE('~', LEX_COMP);
 			LEX_CASE('=', LEX_EQ, '=', LEX_EQ);
 			LEX_CASE('!', LEX_NOT, '=', LEX_NEQ);
 			LEX_CASE('>', LEX_GT, '=', LEX_GTE);
