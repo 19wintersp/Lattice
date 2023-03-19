@@ -82,6 +82,7 @@ struct expr_lexeme {
 		LEX_COMP,
 		LEX_ROOT,
 		LEX_IDENT,
+		LEX_OPT,
 	} type;
 	union {
 		bool boolean;
@@ -257,6 +258,7 @@ static size_t lex_expr(
 			LEX_CASE('/', LEX_DIV, '/', LEX_QUOT);
 			LEX_CASE('%', LEX_MOD);
 			LEX_CASE('@', LEX_ROOT);
+			LEX_CASE('?', LEX_OPT);
 
 			case '"':
 			case '\'': {}
@@ -465,6 +467,239 @@ static size_t lex_expr(
 	}
 
 	return s;
+}
+
+#define PARSE_MATCH(ty) \
+	(*lexp && (*lexp)->type == ty && (lex = *lexp, *lexp = (*lexp)->next, true))
+#define PARSE_TOK(...) \
+	struct expr_token s = { .line = lex->line, __VA_ARGS__ }; \
+	tok = calloc(1, sizeof(struct expr_token)); *tok = s;
+#define PARSE_ERR(...) set_error((lattice_error) { \
+	.line = lex->line, \
+	.code = LATTICE_SYNTAX_ERROR, \
+	.message = format(__VA_ARGS__), \
+})
+
+static struct expr_token *parse_expr(struct expr_lexeme **lexp);
+
+static struct expr_token *parse_primary(struct expr_lexeme **lexp) {
+	struct expr_lexeme *lex;
+	struct expr_token *tok;
+
+	if (PARSE_MATCH(LEX_NULL)) {
+		PARSE_TOK(.type = EXPR_NULL);
+		return tok;
+	}
+
+	if (PARSE_MATCH(LEX_BOOLEAN)) {
+		PARSE_TOK(.type = EXPR_BOOLEAN, .item.boolean = lex->data.boolean);
+		return tok;
+	}
+
+	if (PARSE_MATCH(LEX_NUMBER)) {
+		PARSE_TOK(.type = EXPR_NUMBER, .item.number = lex->data.number);
+		return tok;
+	}
+
+	if (PARSE_MATCH(LEX_STRING)) {
+		PARSE_TOK(.type = EXPR_STRING, .item.string = lex->data.string);
+		lex->data.string = NULL;
+		return tok;
+	}
+
+	if (PARSE_MATCH(LEX_ROOT)) {
+		PARSE_TOK(.type = EXPR_ROOT);
+		return tok;
+	}
+
+	if (PARSE_MATCH(LEX_IDENT)) {
+		PARSE_TOK(.type = EXPR_IDENT, .item.ident = lex->data.ident);
+		lex->data.ident = NULL;
+		return tok;
+	}
+
+	if (PARSE_MATCH(LEX_LPAREN)) {
+		tok = parse_expr(lexp);
+		if (!tok || PARSE_MATCH(LEX_RPAREN)) return tok;
+
+		free_expr_token(tok);
+		PARSE_ERR("expected closing parenthesis after group");
+		return NULL;
+	}
+
+	if ((lex = *lexp)) PARSE_ERR("expected expression");
+
+	return NULL;
+}
+
+static struct expr_token *parse_call(struct expr_lexeme **lexp) {
+	struct expr_lexeme *lex;
+	struct expr_token *tok = parse_primary(lexp);
+	if (!tok) return NULL;
+
+	for (;;) {
+		if (PARSE_MATCH(LEX_DOT)) {
+			if (PARSE_MATCH(LEX_IDENT)) {
+				PARSE_TOK(
+					.type = EXPR_LOOKUP, .item.expr = tok, .item2.ident = lex->data.ident
+				);
+				lex->data.ident = NULL;
+
+				if (PARSE_MATCH(LEX_LPAREN)) {
+					struct expr_token *arg = NULL, *last, *next;
+					if (!PARSE_MATCH(LEX_RPAREN)) {
+						do {
+							next = parse_expr(lexp);
+							if (!next) {
+								free_expr_token(tok);
+								return NULL;
+							}
+
+							if (arg) {
+								last->next = next;
+								last = next;
+							} else {
+								arg = last = next;
+							}
+						} while (PARSE_MATCH(LEX_COMMA));
+
+						if (!PARSE_MATCH(LEX_RPAREN)) {
+							free_expr_token(tok);
+							PARSE_ERR("expected closing parenthesis after arguments");
+							return NULL;
+						}
+					}
+
+					tok->type = EXPR_METHOD;
+					tok->item.expr = arg;
+				}
+
+				break;
+			} else {
+				free_expr_token(tok);
+				PARSE_ERR("expected identifier after dot");
+				return NULL;
+			}
+		} else if (PARSE_MATCH(LEX_LBRACK)) {
+			struct expr_token *index = parse_expr(lexp);
+			if (!index) {
+				free_expr_token(tok);
+				return NULL;
+			}
+
+			PARSE_TOK(.type = EXPR_INDEX, .item.expr = tok, .item2.expr = index);
+		} else break;
+	}
+
+	return tok;
+}
+
+static struct {
+	enum expr_lexeme_type lex;
+	enum expr_token_type expr;
+} binary_op[] = {
+	{ LEX_ADD,  EXPR_ADD },
+	{ LEX_SUB,  EXPR_SUB },
+	{ LEX_NOT,  EXPR_NOT },
+	{ LEX_COMP, EXPR_COMP },
+};
+
+static struct expr_token *parse_unary(struct expr_lexeme **lexp) {
+	struct expr_lexeme *lex;
+	struct expr_token *tok;
+
+	for (int i = 0; i < sizeof(binary_op) / sizeof(binary_op[0]); i++) {
+		if (PARSE_MATCH(binary_op[i].lex)) {
+			tok = parse_unary(lexp);
+			if (!tok) return NULL;
+
+			PARSE_TOK(.type = binary_op[i].expr, .item.expr = tok);
+			return tok;
+		}
+	}
+
+	return parse_call(lexp);
+}
+
+static int binary_op_prec[] = { 0, 2, 8, 11, 13, 18 };
+static struct {
+	enum expr_lexeme_type lex;
+	enum expr_token_type expr;
+} binary_op[] = {
+	{ LEX_BOTH, EXPR_BOTH },
+	{ LEX_EITHER, EXPR_EITHER },
+	{ LEX_EQ,   EXPR_EQ },
+	{ LEX_NEQ,  EXPR_NEQ },
+	{ LEX_LT,   EXPR_LT },
+	{ LEX_LTE,  EXPR_LTE },
+	{ LEX_GT,   EXPR_GT },
+	{ LEX_GTE,  EXPR_GTE },
+	{ LEX_AND,  EXPR_AND },
+	{ LEX_OR,   EXPR_OR },
+	{ LEX_XOR,  EXPR_XOR },
+	{ LEX_ADD,  EXPR_ADD },
+	{ LEX_SUB,  EXPR_SUB },
+	{ LEX_MUL,  EXPR_MUL },
+	{ LEX_DIV,  EXPR_DIV },
+	{ LEX_QUOT, EXPR_QUOT },
+	{ LEX_EXP,  EXPR_EXP },
+	{ LEX_MOD,  EXPR_MOD },
+};
+
+static struct expr_token *parse_binary(struct expr_lexeme **lexp, int prec) {
+	if (prec >= sizeof(binary_op_prec) / sizeof(binary_op_prec[0]))
+		return parse_unary(lexp);
+
+	struct expr_lexeme *lex;
+	struct expr_token *tok = parse_binary(lexp, prec + 1);
+	if (!tok) return NULL;
+
+	for (;;) {
+		for (int i = binary_op_prec[prec]; i < binary_op_prec[prec + 1]; i++) {
+			if (PARSE_MATCH(binary_op[i].lex)) {
+				PARSE_TOK(
+					.type = binary_op[i].expr,
+					.item.expr = tok,
+					.item2.expr = parse_binary(lexp, prec + 1)
+				);
+
+				if (!tok->item2.expr) {
+					free_expr_token(tok);
+					return NULL;
+				}
+
+				goto parse_binary_continue;
+			}
+		}
+
+		break;
+
+parse_binary_continue:
+	}
+
+	return tok;
+}
+
+static struct expr_token *parse_expr(struct expr_lexeme **lexp) {
+	struct expr_lexeme *lex;
+	struct expr_token *tok = parse_binary(lexp, 0);
+	if (!tok) return NULL;
+
+	if (PARSE_MATCH(LEX_OPT)) {
+		struct expr_token *branch = parse_binary(lexp, 0);
+
+		if (!PARSE_MATCH(LEX_COLON)) {
+			free_expr_token(tok);
+			free_expr_token(branch);
+			PARSE_ERR("expected colon for ternary");
+			return NULL;
+		}
+
+		branch->next = parse_binary(lexp, 0);
+		PARSE_TOK(.type = EXPR_TERNARY, .item.expr = tok, .item2.expr = branch);
+	}
+
+	return tok;
 }
 
 static size_t file_emit(const char *data, void *file) {
