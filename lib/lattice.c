@@ -569,6 +569,7 @@ static struct expr_token *parse_call(struct expr_lexeme **lexp) {
 
 						if (!PARSE_MATCH(LEX_RPAREN)) {
 							free_expr_token(tok);
+							free_expr_token(arg);
 							PARSE_ERR("expected closing parenthesis after arguments");
 							return NULL;
 						}
@@ -588,6 +589,13 @@ static struct expr_token *parse_call(struct expr_lexeme **lexp) {
 			struct expr_token *index = parse_expr(lexp);
 			if (!index) {
 				free_expr_token(tok);
+				return NULL;
+			}
+
+			if (!PARSE_MATCH(LEX_RBRACK)) {
+				free_expr_token(tok);
+				free_expr_token(index);
+				PARSE_ERR("expected closing bracket after subscription");
 				return NULL;
 			}
 
