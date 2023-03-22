@@ -529,6 +529,77 @@ static struct expr_token *parse_primary(struct expr_lexeme **lexp) {
 		return NULL;
 	}
 
+	if (PARSE_MATCH(LEX_LBRACK)) {
+		struct expr_token *value = NULL, *last, *next;
+		if (!PARSE_MATCH(LEX_RBRACK)) {
+			do {
+				next = parse_expr(lexp);
+				if (!next) return NULL;
+
+				if (value) {
+					last->next = next;
+					last = next;
+				} else {
+					value = last = next;
+				}
+			} while (PARSE_MATCH(LEX_COMMA));
+
+			if (!PARSE_MATCH(LEX_RBRACK)) {
+				free_expr_token(value);
+				PARSE_ERR("expected closing bracket after array values");
+				return NULL;
+			}
+		}
+
+		PARSE_TOK(.type = EXPR_ARRAY, .item[0].expr = value);
+		return tok;
+	}
+
+	if (PARSE_MATCH(LEX_LBRACE)) {
+		struct expr_token *key = NULL, *lastk, *nextk;
+		struct expr_token *value = NULL, *lastv, *nextv;
+		if (!PARSE_MATCH(LEX_RBRACE)) {
+			do {
+				nextk = parse_expr(lexp);
+				if (!nextk) return NULL;
+
+				if (key) {
+					lastk->next = nextk;
+					lastk = nextk;
+				} else {
+					key = lastk = nextk;
+				}
+
+				if (!PARSE_MATCH(LEX_COLON)) {
+					free_expr_token(key);
+					free_expr_token(value);
+					PARSE_ERR("expected colon after object key");
+					return NULL;
+				}
+
+				nextv = parse_expr(lexp);
+				if (!nextv) return NULL;
+
+				if (value) {
+					lastv->next = nextv;
+					lastv = nextv;
+				} else {
+					value = lastv = nextv;
+				}
+			} while (PARSE_MATCH(LEX_COMMA));
+
+			if (!PARSE_MATCH(LEX_RBRACE)) {
+				free_expr_token(key);
+				free_expr_token(value);
+				PARSE_ERR("expected closing brace after object entries");
+				return NULL;
+			}
+		}
+
+		PARSE_TOK(.type = EXPR_OBJECT, .item[0].expr = key, .item[1].expr = value);
+		return tok;
+	}
+
 	if ((lex = *lexp)) PARSE_ERR("expected expression");
 
 	return NULL;
