@@ -271,7 +271,7 @@ static size_t lex_expr(
 
 				while ((c = expr[s++]) != quote) {
 					size_t i = length++;
-					contents = realloc(contents, length);
+					contents = realloc(contents, length + 1);
 					contents[i] = c;
 
 					if (c == '\\') {
