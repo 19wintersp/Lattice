@@ -33,12 +33,12 @@ static void lfree(struct json_object *obj) {
 
 static struct json_object *lcreate(lattice_type type, lattice_value value) {
 	switch (type) {
-		case LATTICE_TYPE_NULL: return json_object_new_null();
+		case LATTICE_TYPE_NULL:    return json_object_new_null();
 		case LATTICE_TYPE_BOOLEAN: return json_object_new_boolean(value.boolean);
-		case LATTICE_TYPE_NUMBER: return json_object_new_double(value.number);
-		case LATTICE_TYPE_STRING: return json_object_new_string(value.string);
-		case LATTICE_TYPE_ARRAY: return json_object_new_array();
-		case LATTICE_TYPE_OBJECT: return json_object_new_object();
+		case LATTICE_TYPE_NUMBER:  return json_object_new_double(value.number);
+		case LATTICE_TYPE_STRING:  return json_object_new_string(value.string);
+		case LATTICE_TYPE_ARRAY:   return json_object_new_array();
+		case LATTICE_TYPE_OBJECT:  return json_object_new_object();
 		default: return NULL;
 	}
 }
@@ -50,13 +50,13 @@ static struct json_object *lclone(const struct json_object *obj) {
 
 static lattice_type ltype(const struct json_object *obj) {
 	static lattice_type trans[] = {
-		[json_type_null] = LATTICE_TYPE_NULL,
+		[json_type_null]    = LATTICE_TYPE_NULL,
 		[json_type_boolean] = LATTICE_TYPE_BOOLEAN,
-		[json_type_double] = LATTICE_TYPE_NUMBER,
-		[json_type_int] = LATTICE_TYPE_NUMBER,
-		[json_type_string] = LATTICE_TYPE_STRING,
-		[json_type_array] = LATTICE_TYPE_ARRAY,
-		[json_type_object] = LATTICE_TYPE_OBJECT,
+		[json_type_double]  = LATTICE_TYPE_NUMBER,
+		[json_type_int]     = LATTICE_TYPE_NUMBER,
+		[json_type_string]  = LATTICE_TYPE_STRING,
+		[json_type_array]   = LATTICE_TYPE_ARRAY,
+		[json_type_object]  = LATTICE_TYPE_OBJECT,
 	};
 
 	return trans[json_object_get_type(obj)];
@@ -107,9 +107,9 @@ static struct json_object *lget(
 	lattice_index index
 ) {
 	switch (json_object_get_type(obj)) {
-		case json_type_array: return json_object_array_get_idx(obj, index.array);
+		case json_type_array:  return json_object_array_get_idx(obj, index.array);
 		case json_type_object: return json_object_object_get(obj, index.object);
-		default: return NULL;
+		default:               return NULL;
 	}
 }
 

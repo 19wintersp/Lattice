@@ -17,13 +17,13 @@ static void lfree(cJSON *obj) {
 
 static cJSON *lcreate(lattice_type type, lattice_value value) {
 	switch (type) {
-		case LATTICE_TYPE_NULL: return cJSON_CreateNull();
+		case LATTICE_TYPE_NULL:    return cJSON_CreateNull();
 		case LATTICE_TYPE_BOOLEAN: return cJSON_CreateBool(value.boolean);
-		case LATTICE_TYPE_NUMBER: return cJSON_CreateNumber(value.number);
-		case LATTICE_TYPE_STRING: return cJSON_CreateString(value.string);
-		case LATTICE_TYPE_ARRAY: return cJSON_CreateArray();
-		case LATTICE_TYPE_OBJECT: return cJSON_CreateObject();
-		default: return NULL;
+		case LATTICE_TYPE_NUMBER:  return cJSON_CreateNumber(value.number);
+		case LATTICE_TYPE_STRING:  return cJSON_CreateString(value.string);
+		case LATTICE_TYPE_ARRAY:   return cJSON_CreateArray();
+		case LATTICE_TYPE_OBJECT:  return cJSON_CreateObject();
+		default:                   return NULL;
 	}
 }
 
@@ -32,10 +32,10 @@ static cJSON *lclone(const cJSON *obj) {
 }
 
 static lattice_type ltype(const cJSON *obj) {
-	if (cJSON_IsBool(obj)) return LATTICE_TYPE_BOOLEAN;
+	if (cJSON_IsBool(obj))   return LATTICE_TYPE_BOOLEAN;
 	if (cJSON_IsNumber(obj)) return LATTICE_TYPE_NUMBER;
 	if (cJSON_IsString(obj)) return LATTICE_TYPE_STRING;
-	if (cJSON_IsArray(obj)) return LATTICE_TYPE_ARRAY;
+	if (cJSON_IsArray(obj))  return LATTICE_TYPE_ARRAY;
 	if (cJSON_IsObject(obj)) return LATTICE_TYPE_OBJECT;
 
 	return LATTICE_TYPE_NULL;
@@ -44,7 +44,7 @@ static lattice_type ltype(const cJSON *obj) {
 static lattice_value lvalue(const cJSON *obj) {
 	lattice_value value = { 0 };
 
-	if (cJSON_IsBool(obj)) value.boolean = cJSON_IsTrue(obj);
+	if (cJSON_IsBool(obj))   value.boolean = cJSON_IsTrue(obj);
 	if (cJSON_IsNumber(obj)) value.number = cJSON_GetNumberValue(obj);
 	if (cJSON_IsString(obj)) value.string = cJSON_GetStringValue(obj);
 
@@ -59,14 +59,14 @@ static size_t llength(const cJSON *obj) {
 }
 
 static cJSON *lget(const cJSON *obj, lattice_index index) {
-	if (cJSON_IsArray(obj)) return cJSON_GetArrayItem(obj, index.array);
+	if (cJSON_IsArray(obj))  return cJSON_GetArrayItem(obj, index.array);
 	if (cJSON_IsObject(obj)) return cJSON_GetObjectItem(obj, index.object);
 
 	return NULL;
 }
 
 static void ladd(cJSON *obj, const char *key, cJSON *value) {
-	if (cJSON_IsArray(obj)) cJSON_AddItemToArray(obj, value);
+	if (cJSON_IsArray(obj))       cJSON_AddItemToArray(obj, value);
 	else if (cJSON_IsObject(obj)) cJSON_AddItemToObject(obj, key, value);
 }
 

@@ -17,13 +17,13 @@ static void lfree(json_t *obj) {
 
 static json_t *lcreate(lattice_type type, lattice_value value) {
 	switch (type) {
-		case LATTICE_TYPE_NULL: return json_null();
+		case LATTICE_TYPE_NULL:    return json_null();
 		case LATTICE_TYPE_BOOLEAN: return json_boolean(value.boolean);
-		case LATTICE_TYPE_NUMBER: return json_real(value.number);
-		case LATTICE_TYPE_STRING: return json_string(value.string);
-		case LATTICE_TYPE_ARRAY: return json_array();
-		case LATTICE_TYPE_OBJECT: return json_object();
-		default: return NULL;
+		case LATTICE_TYPE_NUMBER:  return json_real(value.number);
+		case LATTICE_TYPE_STRING:  return json_string(value.string);
+		case LATTICE_TYPE_ARRAY:   return json_array();
+		case LATTICE_TYPE_OBJECT:  return json_object();
+		default:                   return NULL;
 	}
 }
 
@@ -33,14 +33,14 @@ static json_t *lclone(const json_t *obj) {
 
 static lattice_type ltype(const json_t *obj) {
 	static lattice_type trans[] = {
-		[JSON_NULL] = LATTICE_TYPE_NULL,
-		[JSON_TRUE] = LATTICE_TYPE_BOOLEAN,
-		[JSON_FALSE] = LATTICE_TYPE_BOOLEAN,
-		[JSON_REAL] = LATTICE_TYPE_NUMBER,
+		[JSON_NULL]    = LATTICE_TYPE_NULL,
+		[JSON_TRUE]    = LATTICE_TYPE_BOOLEAN,
+		[JSON_FALSE]   = LATTICE_TYPE_BOOLEAN,
+		[JSON_REAL]    = LATTICE_TYPE_NUMBER,
 		[JSON_INTEGER] = LATTICE_TYPE_NUMBER,
-		[JSON_STRING] = LATTICE_TYPE_STRING,
-		[JSON_ARRAY] = LATTICE_TYPE_ARRAY,
-		[JSON_OBJECT] = LATTICE_TYPE_OBJECT,
+		[JSON_STRING]  = LATTICE_TYPE_STRING,
+		[JSON_ARRAY]   = LATTICE_TYPE_ARRAY,
+		[JSON_OBJECT]  = LATTICE_TYPE_OBJECT,
 	};
 
 	return trans[json_typeof(obj)];
@@ -77,17 +77,17 @@ static lattice_value lvalue(const json_t *obj) {
 static size_t llength(const json_t *obj) {
 	switch (json_typeof(obj)) {
 		case JSON_STRING: return strlen(json_string_value(obj));
-		case JSON_ARRAY: return json_array_size(obj);
+		case JSON_ARRAY:  return json_array_size(obj);
 		case JSON_OBJECT: return json_object_size(obj);
-		default: return 0;
+		default:          return 0;
 	}
 }
 
 static json_t *lget(const json_t *obj, lattice_index index) {
 	switch (json_typeof(obj)) {
-		case JSON_ARRAY: return json_array_get(obj, index.array);
+		case JSON_ARRAY:  return json_array_get(obj, index.array);
 		case JSON_OBJECT: return json_object_get(obj, index.object);
-		default: return NULL;
+		default:          return NULL;
 	}
 }
 
