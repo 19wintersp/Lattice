@@ -28,7 +28,7 @@ static json_t *lcreate(lattice_type type, lattice_value value) {
 }
 
 static json_t *lclone(const json_t *obj) {
-	return json_deep_copy(obj);
+	return obj ? json_deep_copy(obj) : NULL;
 }
 
 static lattice_type ltype(const json_t *obj) {

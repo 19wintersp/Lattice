@@ -28,7 +28,7 @@ static cJSON *lcreate(lattice_type type, lattice_value value) {
 }
 
 static cJSON *lclone(const cJSON *obj) {
-	return cJSON_Duplicate(obj, true);
+	return obj ? cJSON_Duplicate(obj, true) : NULL;
 }
 
 static lattice_type ltype(const cJSON *obj) {

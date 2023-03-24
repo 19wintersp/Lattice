@@ -44,6 +44,8 @@ static struct json_object *lcreate(lattice_type type, lattice_value value) {
 }
 
 static struct json_object *lclone(const struct json_object *obj) {
+	if (!obj) return NULL;
+
 	struct json_object *clone = NULL;
 	return json_object_deep_copy(obj, &clone, NULL) == 0 ? clone : NULL;
 }
