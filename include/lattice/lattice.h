@@ -35,6 +35,7 @@ typedef struct lattice_iface {
 	char *(*print)(const void *);
 	void (*free)(void *);
 	void *(*create)(lattice_type, lattice_value);
+	void *(*clone)(const void *);
 	lattice_type (*type)(const void *);
 	lattice_value (*value)(const void *);
 	size_t (*length)(const void *);

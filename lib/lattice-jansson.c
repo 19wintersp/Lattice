@@ -27,6 +27,10 @@ static json_t *lcreate(lattice_type type, lattice_value value) {
 	}
 }
 
+static json_t *lclone(const json_t *obj) {
+	return json_deep_copy(obj);
+}
+
 static lattice_type ltype(const json_t *obj) {
 	static lattice_type trans[] = {
 		[JSON_NULL] = LATTICE_TYPE_NULL,
@@ -107,6 +111,7 @@ static lattice_iface iface = {
 	.print  = (char *(*)(const void *)) lprint,
 	.free   = (void (*)(void *)) lfree,
 	.create = (void *(*)(lattice_type, lattice_value)) lcreate,
+	.clone  = (void *(*)(const void *)) lclone,
 	.type   = (lattice_type (*)(const void *)) ltype,
 	.value  = (lattice_value (*)(const void *)) lvalue,
 	.length = (size_t (*)(const void *)) llength,

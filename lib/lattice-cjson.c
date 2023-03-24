@@ -27,6 +27,10 @@ static cJSON *lcreate(lattice_type type, lattice_value value) {
 	}
 }
 
+static cJSON *lclone(const cJSON *obj) {
+	return cJSON_Duplicate(obj, true);
+}
+
 static lattice_type ltype(const cJSON *obj) {
 	if (cJSON_IsBool(obj)) return LATTICE_TYPE_BOOLEAN;
 	if (cJSON_IsNumber(obj)) return LATTICE_TYPE_NUMBER;
@@ -71,6 +75,7 @@ static lattice_iface iface = {
 	.print  = (char *(*)(const void *)) lprint,
 	.free   = (void (*)(void *)) lfree,
 	.create = (void *(*)(lattice_type, lattice_value)) lcreate,
+	.clone  = (void *(*)(const void *)) lclone,
 	.type   = (lattice_type (*)(const void *)) ltype,
 	.value  = (lattice_value (*)(const void *)) lvalue,
 	.length = (size_t (*)(const void *)) llength,
