@@ -651,8 +651,6 @@ static struct expr_token *parse_call(struct expr_lexeme **lexp) {
 					tok->type = EXPR_METHOD;
 					tok->item[2].expr = arg;
 				}
-
-				break;
 			} else {
 				free_expr_token(tok);
 				PARSE_ERR("expected identifier after dot");
