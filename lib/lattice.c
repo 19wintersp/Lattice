@@ -1,5 +1,7 @@
 #include <ctype.h>
+#include <math.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -799,6 +801,639 @@ static struct expr_token *parse_expr(struct expr_lexeme **lexp) {
 	}
 
 	return tok;
+}
+
+static bool value_truthy(const void *value, lattice_iface iface) {
+	switch (iface.type(value)) {
+		case LATTICE_TYPE_NULL:
+			return false;
+
+		case LATTICE_TYPE_BOOLEAN:
+			return iface.value(value).boolean;
+
+		case LATTICE_TYPE_NUMBER:
+			return iface.value(value).number != 0.0;
+
+		case LATTICE_TYPE_STRING:
+			return iface.value(value).string[0] != 0;
+
+		case LATTICE_TYPE_ARRAY:
+		case LATTICE_TYPE_OBJECT:
+			return iface.length(value) > 0;
+	}
+}
+
+static bool value_eq(const void *lhs, const void *rhs, lattice_iface iface) {
+	if (iface.type(lhs) != iface.type(rhs)) return false;
+
+	switch (iface.type(lhs)) {
+		case LATTICE_TYPE_NULL:
+			return true;
+
+		case LATTICE_TYPE_BOOLEAN:
+		case LATTICE_TYPE_NUMBER:
+			return iface.value(lhs).number == iface.value(rhs).number;
+
+		case LATTICE_TYPE_STRING:
+			return strcmp(iface.value(lhs).string, iface.value(rhs).string) == 0;
+
+		case LATTICE_TYPE_ARRAY:
+		case LATTICE_TYPE_OBJECT:
+			return false;
+	}
+}
+
+static void *eval_expr(
+	const struct expr_token *expr,
+	const void *ctx,
+	lattice_iface iface
+) {
+	void *lhs, *rhs, *ref;
+	lattice_value value = {};
+	lattice_index index = {};
+
+	switch (expr->type) {
+		case EXPR_NULL:
+			return iface.create(LATTICE_TYPE_NULL, value);
+
+		case EXPR_BOOLEAN:
+			value.boolean = expr->item[0].boolean;
+			return iface.create(LATTICE_TYPE_BOOLEAN, value);
+
+		case EXPR_NUMBER:
+			value.number = expr->item[0].number;
+			return iface.create(LATTICE_TYPE_NUMBER, value);
+
+		case EXPR_STRING:
+			value.string = expr->item[0].string;
+			return iface.create(LATTICE_TYPE_STRING, value);
+
+		case EXPR_ARRAY: {}
+			void *array = iface.create(LATTICE_TYPE_ARRAY, value);
+			for (struct expr_token *v = expr->item[0].expr; v; v = v->next) {
+				void *ve = eval_expr(v, ctx, iface);
+				if (!ve) {
+					iface.free(array);
+					return NULL;
+				}
+
+				iface.add(array, NULL, ve);
+			}
+
+			return array;
+
+		case EXPR_OBJECT: {}
+			void *object = iface.create(LATTICE_TYPE_OBJECT, value);
+			struct expr_token *v = expr->item[1].expr;
+			for (struct expr_token *k = expr->item[0].expr; k; k = k->next) {
+				void *ke = eval_expr(k, ctx, iface);
+				if (!ke) {
+					iface.free(object);
+					return NULL;
+				}
+
+				switch (iface.type(ke)) {
+					case LATTICE_TYPE_NULL:
+						iface.free(ke);
+						continue;
+
+					case LATTICE_TYPE_STRING: {}
+						void *ve = eval_expr(v, ctx, iface);
+						if (!ve) {
+							iface.free(object); iface.free(ke);
+							return NULL;
+						}
+
+						iface.add(object, iface.value(ke).string, ve);
+						iface.free(ke);
+						v = v->next;
+						continue;
+
+					default:
+						set_error((lattice_error) {
+							.line = k->line,
+							.code = LATTICE_TYPE_ERROR,
+							.message = astrdup("object key must be string or null"),
+						});
+
+						iface.free(object); iface.free(ke);
+						return NULL;
+				}
+			}
+
+			return object;
+
+		case EXPR_EITHER:
+		case EXPR_BOTH:
+			lhs = eval_expr(expr->item[0].expr, ctx, iface);
+			if (!lhs) return NULL;
+
+			if ((expr->type == EXPR_EITHER) == value_truthy(lhs, iface)) return lhs;
+
+			iface.free(lhs);
+			return eval_expr(expr->item[1].expr, ctx, iface);
+
+		case EXPR_EQ:
+		case EXPR_NEQ:
+			lhs = eval_expr(expr->item[0].expr, ctx, iface);
+			if (!lhs) return NULL;
+
+			rhs = eval_expr(expr->item[1].expr, ctx, iface);
+			if (!rhs) {
+				iface.free(lhs);
+				return NULL;
+			}
+
+			bool eq_value = value_eq(lhs, rhs, iface);
+			value.boolean = (expr->type == EXPR_EQ) == eq_value;
+
+			iface.free(lhs); iface.free(rhs);
+			return iface.create(LATTICE_TYPE_BOOLEAN, value);
+
+		case EXPR_GT:
+		case EXPR_LTE:
+		case EXPR_LT:
+		case EXPR_GTE:
+			lhs = eval_expr(expr->item[0].expr, ctx, iface);
+			if (!lhs) return NULL;
+
+			rhs = eval_expr(expr->item[1].expr, ctx, iface);
+			if (!rhs) {
+				iface.free(lhs);
+				return NULL;
+			}
+
+			if (iface.type(lhs) != iface.type(rhs)) {
+				set_error((lattice_error) {
+					.line = expr->line,
+					.code = LATTICE_TYPE_ERROR,
+					.message = astrdup("can only compare similar types"),
+				});
+
+				iface.free(lhs); iface.free(rhs);
+				return NULL;
+			}
+
+			if (
+				iface.type(lhs) != LATTICE_TYPE_NUMBER &&
+				iface.type(lhs) != LATTICE_TYPE_STRING
+			) {
+				set_error((lattice_error) {
+					.line = expr->line,
+					.code = LATTICE_TYPE_ERROR,
+					.message = astrdup("can only compare number or string"),
+				});
+
+				iface.free(lhs); iface.free(rhs);
+				return NULL;
+			}
+
+			double cmp = iface.type(lhs) == LATTICE_TYPE_STRING
+				? strcmp(iface.value(lhs).string, iface.value(rhs).string)
+				: iface.value(lhs).number - iface.value(rhs).number;
+
+			value.boolean = 
+				(cmp < 0.0 && (expr->type == EXPR_LT || expr->type == EXPR_LTE)) ||
+				(cmp > 0.0 && (expr->type == EXPR_GT || expr->type == EXPR_GTE)) ||
+				(cmp == 0.0 && (expr->type == EXPR_LTE || expr->type == EXPR_GTE));
+
+			iface.free(lhs); iface.free(rhs);
+			return iface.create(LATTICE_TYPE_BOOLEAN, value);
+
+		case EXPR_ADD:
+		case EXPR_SUB:
+		case EXPR_MUL:
+		case EXPR_DIV:
+		case EXPR_QUOT:
+		case EXPR_MOD:
+		case EXPR_EXP:
+			lhs = eval_expr(expr->item[0].expr, ctx, iface);
+			if (!lhs) return NULL;
+
+			bool bat_lhs_seq =
+				iface.type(lhs) == LATTICE_TYPE_STRING ||
+				iface.type(lhs) == LATTICE_TYPE_ARRAY;
+
+			if (
+				iface.type(lhs) != LATTICE_TYPE_NUMBER &&
+				!(bat_lhs_seq && (expr->type == EXPR_ADD || expr->type == EXPR_MUL))
+			) {
+				set_error((lattice_error) {
+					.line = expr->item[0].expr->line,
+					.code = LATTICE_TYPE_ERROR,
+					.message = astrdup("operands must be numbers"),
+				});
+
+				iface.free(lhs);
+				return NULL;
+			}
+
+			rhs = eval_expr(expr->item[1].expr, ctx, iface);
+			if (!rhs) {
+				iface.free(lhs);
+				return NULL;
+			}
+
+			if (
+				!(bat_lhs_seq && expr->type == EXPR_ADD) &&
+				iface.type(rhs) != LATTICE_TYPE_NUMBER
+			) {
+				set_error((lattice_error) {
+					.line = expr->item[1].expr->line,
+					.code = LATTICE_TYPE_ERROR,
+					.message = astrdup("operands must be numbers"),
+				});
+
+				iface.free(lhs); iface.free(rhs);
+				return NULL;
+			}
+
+			if (bat_lhs_seq && expr->type == EXPR_ADD) {
+				if (iface.type(lhs) != iface.type(rhs)) {
+					set_error((lattice_error) {
+						.line = expr->line,
+						.code = LATTICE_TYPE_ERROR,
+						.message = astrdup("sequence concatenation requires similar types"),
+					});
+
+					iface.free(lhs); iface.free(rhs);
+					return NULL;
+				}
+
+				if (iface.type(lhs) == LATTICE_TYPE_STRING) {
+					value.string = malloc(iface.length(lhs) + iface.length(rhs) + 1);
+					strcpy((char *) value.string, iface.value(lhs).string);
+					strcat((char *) value.string, iface.value(rhs).string);
+
+					iface.free(lhs); iface.free(rhs);
+					ref = iface.create(LATTICE_TYPE_STRING, value);
+					free(value.string);
+					return ref;
+				} else {
+					void *catarray = iface.create(LATTICE_TYPE_ARRAY, value);
+
+					for (size_t i = 0; i < iface.length(lhs); i++) {
+						index.array = i;
+						iface.add(catarray, NULL, iface.clone(iface.get(lhs, index)));
+					}
+
+					for (size_t i = 0; i < iface.length(rhs); i++) {
+						index.array = i;
+						iface.add(catarray, NULL, iface.clone(iface.get(rhs, index)));
+					}
+
+					iface.free(lhs); iface.free(rhs);
+					return catarray;
+				}
+			} else if (bat_lhs_seq && expr->type == EXPR_MUL) {
+				if (fmod(iface.value(rhs).number, 1.0) != 0.0) {
+					set_error((lattice_error) {
+						.line = expr->item[1].expr->line,
+						.code = LATTICE_VALUE_ERROR,
+						.message = astrdup("sequence multiplication rhs must be whole"),
+					});
+
+					iface.free(lhs); iface.free(rhs);
+					return NULL;
+				}
+
+				size_t n = iface.value(rhs).number;
+
+				if (iface.type(lhs) == LATTICE_TYPE_STRING) {
+					value.string = calloc(iface.length(lhs) * n + 1, 1);
+					for (size_t i = 0; i < n; i++)
+						strcat((char *) value.string, iface.value(lhs).string);
+
+					iface.free(lhs); iface.free(rhs);
+					ref = iface.create(LATTICE_TYPE_STRING, value);
+					free(value.string);
+					return ref;
+				} else {
+					void *catarray = iface.create(LATTICE_TYPE_ARRAY, value);
+
+					for (size_t i = 0; i < n; i++) {
+						for (size_t j = 0; j < iface.length(lhs); j++) {
+							index.array = j;
+							iface.add(catarray, NULL, iface.clone(iface.get(lhs, index)));
+						}
+					}
+
+					iface.free(lhs); iface.free(rhs);
+					return catarray;
+				}
+			} else {
+				double bat_lhs = iface.value(lhs).number;
+				double bat_rhs = iface.value(rhs).number;
+
+				switch (expr->type) {
+					case EXPR_ADD:  value.number = bat_lhs + bat_rhs;        break;
+					case EXPR_SUB:  value.number = bat_lhs - bat_rhs;        break;
+					case EXPR_MUL:  value.number = bat_lhs * bat_rhs;        break;
+					case EXPR_DIV:  value.number = bat_lhs / bat_rhs;        break;
+					case EXPR_QUOT: value.number = floor(bat_lhs / bat_rhs); break;
+					case EXPR_MOD:  value.number = fmod(bat_lhs, bat_rhs);   break;
+					case EXPR_EXP:  value.number = pow(bat_lhs, bat_rhs);    break;
+					default:        break;
+				}
+
+				iface.free(lhs); iface.free(rhs);
+				return iface.create(LATTICE_TYPE_NUMBER, value);
+			}
+
+		case EXPR_AND:
+		case EXPR_OR:
+		case EXPR_XOR:
+			lhs = eval_expr(expr->item[0].expr, ctx, iface);
+			if (!lhs) return NULL;
+
+			if (iface.type(lhs) != LATTICE_TYPE_NUMBER) {
+				set_error((lattice_error) {
+					.line = expr->item[0].expr->line,
+					.code = LATTICE_TYPE_ERROR,
+					.message = astrdup("bitwise operands must be numbers"),
+				});
+
+				iface.free(lhs);
+				return NULL;
+			}
+
+			if (fmod(iface.value(lhs).number, 1.0) != 0.0) {
+				set_error((lattice_error) {
+					.line = expr->item[0].expr->line,
+					.code = LATTICE_VALUE_ERROR,
+					.message = astrdup("bitwise operands must be whole numbers"),
+				});
+
+				iface.free(lhs);
+				return NULL;
+			}
+
+			rhs = eval_expr(expr->item[1].expr, ctx, iface);
+			if (!rhs) {
+				iface.free(lhs);
+				return NULL;
+			}
+
+			if (iface.type(rhs) != LATTICE_TYPE_NUMBER) {
+				set_error((lattice_error) {
+					.line = expr->item[1].expr->line,
+					.code = LATTICE_TYPE_ERROR,
+					.message = astrdup("bitwise operands must be numbers"),
+				});
+
+				iface.free(lhs); iface.free(rhs);
+				return NULL;
+			}
+
+			if (fmod(iface.value(rhs).number, 1.0) != 0.0) {
+				set_error((lattice_error) {
+					.line = expr->item[1].expr->line,
+					.code = LATTICE_VALUE_ERROR,
+					.message = astrdup("bitwise operands must be whole numbers"),
+				});
+
+				iface.free(lhs); iface.free(rhs);
+				return NULL;
+			}
+
+			uint64_t bbw_lhs = iface.value(lhs).number;
+			uint64_t bbw_rhs = iface.value(rhs).number;
+
+			uint64_t bbw_value;
+			switch (expr->type) {
+				case EXPR_AND: bbw_value = bbw_lhs & bbw_rhs; break;
+				case EXPR_OR:  bbw_value = bbw_lhs | bbw_rhs; break;
+				case EXPR_XOR: bbw_value = bbw_lhs ^ bbw_rhs; break;
+				default:       return NULL;
+			}
+
+			iface.free(lhs); iface.free(rhs);
+
+			lattice_value bbw_number = { .number = (double) bbw_value };
+			return iface.create(LATTICE_TYPE_NUMBER, bbw_number);
+
+		case EXPR_COMP:
+			lhs = eval_expr(expr->item[0].expr, ctx, iface);
+			if (!lhs) return NULL;
+
+			if (iface.type(lhs) != LATTICE_TYPE_NUMBER) {
+				set_error((lattice_error) {
+					.line = expr->item[0].expr->line,
+					.code = LATTICE_TYPE_ERROR,
+					.message = astrdup("bitwise operands must be numbers"),
+				});
+
+				iface.free(lhs);
+				return NULL;
+			}
+
+			if (fmod(iface.value(lhs).number, 1.0) != 0.0) {
+				set_error((lattice_error) {
+					.line = expr->item[0].expr->line,
+					.code = LATTICE_VALUE_ERROR,
+					.message = astrdup("bitwise operands must be whole numbers"),
+				});
+
+				iface.free(lhs);
+				return NULL;
+			}
+
+			uint64_t comp_int = iface.value(lhs).number;
+			iface.free(lhs);
+
+			lattice_value comp_number = { .number = (double) (~comp_int) };
+			return iface.create(LATTICE_TYPE_NUMBER, comp_number);
+
+		case EXPR_NOT:
+			lhs = eval_expr(expr->item[0].expr, ctx, iface);
+			if (!lhs) return NULL;
+
+			bool not_value = !value_truthy(lhs, iface);
+			iface.free(lhs);
+
+			lattice_value not_boolean = { .boolean = not_value };
+			return iface.create(LATTICE_TYPE_BOOLEAN, not_boolean);
+
+		case EXPR_NEG:
+		case EXPR_POS:
+			lhs = eval_expr(expr->item[0].expr, ctx, iface);
+			if (!lhs) return NULL;
+
+			if (iface.type(lhs) != LATTICE_TYPE_NUMBER) {
+				set_error((lattice_error) {
+					.line = expr->line,
+					.code = LATTICE_TYPE_ERROR,
+					.message = astrdup("operand must be number"),
+				});
+
+				iface.free(lhs);
+				return NULL;
+			}
+
+			double np_value = iface.value(lhs).number;
+			iface.free(lhs);
+
+			return iface.create(LATTICE_TYPE_NUMBER, (lattice_value) {
+				.number = expr->type == EXPR_NEG ? -np_value : np_value
+			});
+
+		case EXPR_ROOT:
+			return iface.clone(ctx);
+
+		case EXPR_IDENT:
+		case EXPR_LOOKUP:
+			if (expr->type == EXPR_IDENT) lhs = (void *) ctx;
+			else lhs = eval_expr(expr->item[0].expr, ctx, iface);
+
+			if (!lhs) return NULL;
+			if (iface.type(lhs) != LATTICE_TYPE_OBJECT) {
+				set_error((lattice_error) {
+					.line = expr->line,
+					.code = LATTICE_TYPE_ERROR,
+					.message = astrdup("can only lookup properties of object"),
+				});
+
+				if (expr->type == EXPR_LOOKUP) iface.free(lhs);
+				return NULL;
+			}
+
+			index.object = expr->item[expr->type == EXPR_IDENT ? 0 : 1].ident;
+			void *value = iface.get(lhs, index);
+
+			if (!value) {
+				set_error((lattice_error) {
+					.line = expr->line,
+					.code = LATTICE_NAME_ERROR,
+					.message = format(
+						"'%s' is undefined",
+						expr->item[expr->type == EXPR_IDENT ? 0 : 1].ident
+					),
+				});
+
+				if (expr->type == EXPR_LOOKUP) iface.free(lhs);
+				return NULL;
+			}
+
+			value = iface.clone(value);
+			if (expr->type == EXPR_LOOKUP) iface.free(lhs);
+			return value;
+
+		case EXPR_METHOD:
+			// TODO
+			return NULL;
+
+		case EXPR_INDEX:
+			lhs = eval_expr(expr->item[0].expr, ctx, iface);
+			if (!lhs) return NULL;
+
+			rhs = eval_expr(expr->item[1].expr, ctx, iface);
+			if (!rhs) {
+				iface.free(lhs);
+				return NULL;
+			}
+
+			switch (iface.type(lhs)) {
+				case LATTICE_TYPE_STRING:
+				case LATTICE_TYPE_ARRAY:
+					if (iface.type(rhs) != LATTICE_TYPE_NUMBER) {
+						set_error((lattice_error) {
+							.line = expr->item[1].expr->line,
+							.code = LATTICE_TYPE_ERROR,
+							.message = astrdup("index must be a number"),
+						});
+
+						iface.free(lhs); iface.free(rhs);
+						return NULL;
+					}
+
+					if (fmod(iface.value(rhs).number, 1.0) != 0.0) {
+						set_error((lattice_error) {
+							.line = expr->item[1].expr->line,
+							.code = LATTICE_VALUE_ERROR,
+							.message = astrdup("indices must be whole numbers"),
+						});
+
+						iface.free(lhs); iface.free(rhs);
+						return NULL;
+					}
+
+					size_t i = (size_t) iface.value(rhs).number;
+					if (i >= iface.length(lhs)) {
+						set_error((lattice_error) {
+							.line = expr->item[1].expr->line,
+							.code = LATTICE_VALUE_ERROR,
+							.message = astrdup("index out of range"),
+						});
+
+						iface.free(lhs); iface.free(rhs);
+						return NULL;
+					}
+
+					if (iface.type(lhs) == LATTICE_TYPE_STRING) {
+						char *string = calloc(2, sizeof(char));
+						string[0] = iface.value(lhs).string[i];
+
+						iface.free(lhs); iface.free(rhs);
+						return iface.create(
+							LATTICE_TYPE_STRING,
+							(lattice_value) { .string = string }
+						);
+					} else {
+						index.array = i;
+						void *value = iface.get(lhs, index);
+
+						iface.free(lhs); iface.free(rhs);
+						return iface.clone(value);
+					}
+
+				case LATTICE_TYPE_OBJECT:
+					if (iface.type(rhs) != LATTICE_TYPE_STRING) {
+						set_error((lattice_error) {
+							.line = expr->item[1].expr->line,
+							.code = LATTICE_TYPE_ERROR,
+							.message = astrdup("index must be a string"),
+						});
+
+						iface.free(lhs); iface.free(rhs);
+						return NULL;
+					}
+
+					index.object = iface.value(rhs).string;
+					void *value = iface.clone(iface.get(lhs, index));
+					iface.free(lhs); iface.free(rhs);
+
+					if (!value) {
+						set_error((lattice_error) {
+							.line = expr->item[1].expr->line,
+							.code = LATTICE_VALUE_ERROR,
+							.message = astrdup("index out of range"),
+						});
+
+						iface.free(value);
+						return NULL;
+					}
+
+					return value;
+
+				default:
+					set_error((lattice_error) {
+						.line = expr->line,
+						.code = LATTICE_TYPE_ERROR,
+						.message = astrdup("can only index string, array, or object"),
+					});
+
+					iface.free(lhs);
+					return NULL;
+			}
+
+		case EXPR_TERNARY: {}
+			void *cond_value = eval_expr(expr->item[0].expr, ctx, iface);
+			if (!cond_value) return NULL;
+			bool cond = value_truthy(cond_value, iface);
+
+			iface.free(cond_value);
+			return eval_expr(expr->item[cond ? 1 : 2].expr, ctx, iface);
+	}
 }
 
 static size_t file_emit(const char *data, void *file) {
