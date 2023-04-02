@@ -212,28 +212,27 @@ static void free_token(struct token *token) {
 	lex = calloc(1, sizeof(struct expr_lexeme)); \
 	*lexp = lex; lexp = &lex->next; \
 	lex->line = *line; lex->type = ty;
-#define LEX_SUBCASE(ch, ty) if (expr[s] == ch) { LEX_ADD(ty); s++; break; }
-#define LEX_CP(ch, ty) LEX_SUBCASE(ch, ty)
-#define LEX_CPW(...) __VA_OPT__(LEX_CP(__VA_ARGS__))
-#define LEX_CASE(ch, ty, ...) case ch: LEX_CPW(__VA_ARGS__) LEX_ADD(ty); break;
+#define LEX_SUBCASE(ch, ty) if (**expr== ch) { LEX_ADD(ty); (*expr)++; break; }
+#define LEX_CASE(ch, ty, ...) \
+	case ch: \
+		__VA_OPT__(LEX_SUBCASE(__VA_ARGS__)) \
+		LEX_ADD(ty); break;
 
-static size_t lex_expr(
-	const char *expr,
+static struct expr_lexeme *lex_expr(
+	const char **expr,
 	const char *term,
-	int *line,
-	struct expr_lexeme **lexp
+	int *line
 ) {
-	size_t s = 0;
 	size_t tlen = term ? strlen(term) : 0;
 
-	struct expr_lexeme *lex = NULL;
+	struct expr_lexeme *lex, *lexf, **lexp = &lexf;
 	int brackets = 0;
 
 	while (
-		expr[s] &&
-		(!term || brackets > 0 || strncmp(expr + s, term, tlen) != 0)
+		**expr &&
+		(!term || brackets > 0 || strncmp(*expr, term, tlen) != 0)
 	) {
-		char c = expr[s++];
+		char c = *((*expr)++);
 		switch (c) {
 			case '\n':
 				(*line)++;
@@ -271,13 +270,13 @@ static size_t lex_expr(
 				char *contents = malloc(1);
 				size_t length = 0;
 
-				while ((c = expr[s++]) != quote) {
+				while ((c = *((*expr)++)) != quote) {
 					size_t i = length++;
 					contents = realloc(contents, length + 1);
 					contents[i] = c;
 
 					if (c == '\\') {
-						switch (expr[s++]) {
+						switch (*((*expr)++)) {
 							case 'a':  contents[i] = '\a'; break;
 							case 'b':  contents[i] = '\b'; break;
 							case 'e':  contents[i] = '\e'; break;
@@ -291,8 +290,8 @@ static size_t lex_expr(
 							case '\"': contents[i] = '\"'; break;
 
 							case 'x': {}
-								char hi = expr[s++];
-								char lo = expr[s++];
+								char hi = *((*expr)++);
+								char lo = *((*expr)++);
 
 								if (!isxdigit(hi) || !isxdigit(lo)) {
 									set_error((lattice_error) {
@@ -302,7 +301,8 @@ static size_t lex_expr(
 									});
 
 									free(contents);
-									return 0;
+									free_expr_lexeme(lexf);
+									return NULL;
 								}
 
 								hi = hi <= '9' ? hi - '0' : 10 + tolower(hi) - 'a';
@@ -316,11 +316,12 @@ static size_t lex_expr(
 								set_error((lattice_error) {
 									.line = *line,
 									.code = LATTICE_SYNTAX_ERROR,
-									.message = format("invalid string escape '%c'", expr[s - 1]),
+									.message = format("invalid string escape '%c'", *(*expr - 1)),
 								});
 
 								free(contents);
-								return 0;
+								free_expr_lexeme(lexf);
+								return NULL;
 						}
 					}
 				}
@@ -334,93 +335,96 @@ static size_t lex_expr(
 
 			default:
 				if (isdigit(c)) {
-					const char *start = expr + s - 1;
+					const char *start = *expr - 1;
 					int base = 10;
 					double number = (double) (c - '0');
 
 					if (c == '0') {
-						switch (expr[s]) {
+						switch (**expr) {
 							case 'b': base = 2; break;
 							case 'o': base = 8; break;
 							case 'x': base = 16; break;
 
 							default:
-								if (isdigit(expr[s])) {
+								if (isdigit(**expr)) {
 									set_error((lattice_error) {
 										.line = *line,
 										.code = LATTICE_SYNTAX_ERROR,
 										.message = astrdup("decimal literal with leading zero"),
 									});
 
-									return 0;
+									free_expr_lexeme(lexf);
+									return NULL;
 								}
 						}
 
-						if (base != 10) s++;
+						if (base != 10) (*expr)++;
 					}
 
 					int dbase = base > 10 ? 10 : base;
 
 					while (
-						(base == 16 && isxdigit(expr[s])) ||
-						('0' <= expr[s] && expr[s] < '0' + dbase)
+						(base == 16 && isxdigit(**expr)) ||
+						('0' <= **expr && **expr < '0' + dbase)
 					) {
 						number *= base;
-						number += expr[s] <= '9'
-							? expr[s] - '0'
-							: 10 + tolower(expr[s]) - 'a';
+						number += **expr <= '9'
+							? **expr - '0'
+							: 10 + tolower(**expr) - 'a';
 
-						s++;
+						(*expr)++;
 					}
 
 					if (base == 10) {
-						if (expr[s] == '.') {
-							s++;
+						if (**expr == '.') {
+							(*expr)++;
 
-							while (isdigit(expr[s])) s++;
+							while (isdigit(**expr)) (*expr)++;
 						}
 
-						if (expr[s] == 'E' || expr[s] == 'e') {
-							s++;
+						if (**expr == 'E' || **expr == 'e') {
+							(*expr)++;
 
-							if (expr[s] == '+' || expr[s] == '-') s++;
+							if (**expr == '+' || **expr == '-') (*expr)++;
 
-							size_t peds = s;
-							while (isdigit(expr[s])) s++;
+							char *sexpr = *expr;
+							while (isdigit(**expr)) (*expr)++;
 
-							if (s == peds) {
+							if (*expr == sexpr) {
 								set_error((lattice_error) {
 									.line = *line,
 									.code = LATTICE_SYNTAX_ERROR,
 									.message = astrdup("exponent cannot be empty"),
 								});
 
-								return 0;
+								free_expr_lexeme(lexf);
+								return NULL;
 							}
 						}
 
-						char *lit_clone = astrndup(start, expr + s - start);
+						char *lit_clone = astrndup(start, *expr - start);
 						number = atof(lit_clone);
 						free(lit_clone);
 					}
 
-					if (!expr[s] || ispunct(expr[s]) || isspace(expr[s])) {
+					if (!**expr || ispunct(**expr) || isspace(**expr)) {
 						LEX_ADD(LEX_NUMBER);
 						lex->data.number = number;
 					} else {
 						set_error((lattice_error) {
 							.line = *line,
 							.code = LATTICE_SYNTAX_ERROR,
-							.message = format("unexpected character '%c'", expr[s]),
+							.message = format("unexpected character '%c'", **expr),
 						});
 
-						return 0;
+						free_expr_lexeme(lexf);
+						return NULL;
 					}
 				} else if (isalpha(c) || c == '_') {
-					const char *start = expr + s - 1;
-					while (isalnum(expr[s]) || expr[s] == '_') s++;
+					const char *start = *expr - 1;
+					while (isalnum(**expr) || **expr == '_') (*expr)++;
 
-					char *ident = astrndup(start, expr + s - start);
+					char *ident = astrndup(start, *expr - start);
 					if (strcmp(ident, "null") == 0) {
 						LEX_ADD(LEX_NULL);
 					} else if (strcmp(ident, "true") == 0) {
@@ -442,7 +446,8 @@ static size_t lex_expr(
 						.message = format("unexpected character '%c'", c),
 					});
 
-					return 0;
+					free_expr_lexeme(lexf);
+					return NULL;
 				}
 
 				break;
@@ -470,7 +475,7 @@ static size_t lex_expr(
 		}
 	}
 
-	return s;
+	return lexf;
 }
 
 #define PARSE_MATCH(ty) \
