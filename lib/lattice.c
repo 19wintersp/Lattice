@@ -826,26 +826,6 @@ static bool value_truthy(const void *value, lattice_iface iface) {
 	}
 }
 
-static bool value_eq(const void *lhs, const void *rhs, lattice_iface iface) {
-	if (iface.type(lhs) != iface.type(rhs)) return false;
-
-	switch (iface.type(lhs)) {
-		case LATTICE_TYPE_NULL:
-			return true;
-
-		case LATTICE_TYPE_BOOLEAN:
-		case LATTICE_TYPE_NUMBER:
-			return iface.value(lhs).number == iface.value(rhs).number;
-
-		case LATTICE_TYPE_STRING:
-			return strcmp(iface.value(lhs).string, iface.value(rhs).string) == 0;
-
-		case LATTICE_TYPE_ARRAY:
-		case LATTICE_TYPE_OBJECT:
-			return false;
-	}
-}
-
 static void *eval_expr(
 	const struct expr_token *expr,
 	const void *ctx,
@@ -947,7 +927,27 @@ static void *eval_expr(
 				return NULL;
 			}
 
-			bool eq_value = value_eq(lhs, rhs, iface);
+			bool eq_value = false;
+			if (iface.type(lhs) == iface.type(rhs)) {
+				switch (iface.type(lhs)) {
+					case LATTICE_TYPE_NULL:
+						eq_value = true;
+						break;
+
+					case LATTICE_TYPE_BOOLEAN:
+					case LATTICE_TYPE_NUMBER:
+						eq_value = iface.value(lhs).number == iface.value(rhs).number;
+						break;
+
+					case LATTICE_TYPE_STRING:
+						eq_value = strcmp(iface.value(lhs).string, iface.value(rhs).string) == 0;
+						break;
+
+					default:
+						break;
+				}
+			}
+
 			value.boolean = (expr->type == EXPR_EQ) == eq_value;
 
 			iface.free(lhs); iface.free(rhs);
