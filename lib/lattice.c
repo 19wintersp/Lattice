@@ -198,8 +198,10 @@ struct token {
 };
 
 static void free_token(struct token *token) {
-	if (token->child) free_token(token->child);
-	if (token->next) free_token(token->next);
+	if (!token) return;
+
+	free_token(token->child);
+	free_token(token->next);
 
 	free(token->ident);
 	if (token->expr[0]) free_expr_token(token->expr[0]);
