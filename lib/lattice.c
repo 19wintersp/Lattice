@@ -608,6 +608,11 @@ static struct expr_token *parse_primary(struct expr_lexeme **lexp) {
 	}
 
 	if ((lex = *lexp)) PARSE_ERR("expected expression");
+	else set_error((lattice_error) {
+		.line = 0,
+		.code = LATTICE_SYNTAX_ERROR,
+		.message = astrdup("unexpected end of file"),
+	});
 
 	return NULL;
 }
