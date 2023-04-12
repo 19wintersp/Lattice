@@ -1482,6 +1482,234 @@ static void *eval_expr(
 	}
 }
 
+#undef LEX_ADD
+#define LEX_ADD(ty) { \
+	struct token *prev = tok; \
+	tok = calloc(1, sizeof(struct token)); \
+	tok->type = ty; \
+	tok->prev = prev; \
+	*tokp = tok; \
+	tokp = &tok->next; \
+}
+
+#define LEX_ERR(msg) { \
+	set_error((lattice_error) { \
+		.line = line, \
+		.code = LATTICE_SYNTAX_ERROR, \
+		.message = astrdup(msg), \
+	}); \
+	free_token(tokf); \
+	return NULL; \
+}
+
+static struct {
+	const char *str;
+	enum token_type type;
+} keywords[] = {
+	{ "if",      TOKEN_IF },
+	{ "elif",    TOKEN_ELIF },
+	{ "else",    TOKEN_ELSE },
+	{ "switch",  TOKEN_SWITCH },
+	{ "case",    TOKEN_CASE },
+	{ "default", TOKEN_DEFAULT },
+	{ "for",     TOKEN_FOR_ITER },
+	{ "with",    TOKEN_WITH },
+	{ "end",     TOKEN_END },
+};
+
+static struct token *lex(const char *src) {
+	const char *cspan = src;
+	struct token *tok = NULL, *tokf = NULL, **tokp = &tokf;
+	int line = 1;
+
+	while (*src) {
+		char c = *(src++);
+		if (c == '$') {
+			bool escape = *src == '$';
+			if (escape) src++;
+
+			if (src > cspan + 1) {
+				LEX_ADD(TOKEN_SPAN);
+				tok->ident = astrndup(cspan, src - cspan - 1);
+			}
+
+			if (!escape) {
+				c = *(src++);
+				switch (c) {
+					case '(':
+						do {
+							src++;
+							if (*src == '\n') line++;
+						} while (*src && *src != ')');
+
+						if (!*(src++)) LEX_ERR("unterminated comment");
+						break;
+
+					case '[':
+					case '{': {}
+						char sub_term[2] = { c + 2, 0 };
+						struct expr_token *sub_tok = parse_expr(&src, sub_term, &line);
+						if (!sub_tok) {
+							free_token(tokf);
+							return NULL;
+						}
+
+						if (*(src++) != c + 2) {
+							free_expr_token(sub_tok);
+							LEX_ERR("expected closing bracket for substitution");
+						}
+
+						LEX_ADD(c == '[' ? TOKEN_SUB_ESC : TOKEN_SUB_RAW);
+						tok->expr[0] = sub_tok;
+						break;
+
+					case '<': {}
+						const char *path = src + 1;
+
+						do {
+							src++;
+							if (*src == '\n') line++;
+						} while (*src && *src != '>');
+
+						LEX_ADD(TOKEN_INCLUDE);
+						tok->ident = astrndup(path, src - path);
+
+						if (!*(src++)) LEX_ERR("unterminated include");
+						break;
+
+					default:
+						src--;
+						if (!*src) LEX_ERR("expected keyword");
+
+						for (
+							size_t i = sizeof(keywords) / sizeof(keywords[0]);
+							i >= 0; i--
+						) {
+							if (i == 0) LEX_ERR("unknown keyword");
+
+							size_t keyword_length = strlen(keywords[i - 1].str);
+							if (strncmp(src, keywords[i - 1].str, keyword_length) == 0) {
+								src += keyword_length;
+								LEX_ADD(keywords[i - 1].type);
+								break;
+							}
+						}
+
+						if (tok->type != TOKEN_ELSE && tok->type != TOKEN_DEFAULT) {
+							if (*src == '\n') line++;
+							if (!isspace(*(src++))) LEX_ERR("expected whitespace");
+						}
+
+						switch (tok->type) {
+							case TOKEN_IF:
+							case TOKEN_ELIF:
+							case TOKEN_SWITCH:
+							case TOKEN_CASE:
+							case TOKEN_WITH: {}
+								struct expr_token *flow_tok = parse_expr(&src, ":", &line);
+								if (!flow_tok) {
+									free_token(tokf);
+									return NULL;
+								}
+
+								tok->expr[0] = flow_tok;
+								break;
+
+							case TOKEN_FOR_ITER:
+								while (*src && isspace(*src)) {
+									src++;
+									if (*src == '\n') line++;
+								}
+
+								if (!*src || !(isalpha(*src) || *src == '_'))
+									LEX_ERR("expected identifier for loop");
+
+								const char *loop_ident = src;
+								do src++; while (isalnum(*src) || *src == '_');
+
+								tok->ident = astrndup(loop_ident, src - loop_ident);
+
+								do {
+									src++;
+									if (*src == '\n') line++;
+								} while (*src && isspace(*src));
+
+								if (!*src) LEX_ERR("expected preposition for loop");
+
+								if (strncmp(src, "from", 4) == 0)
+									tok->type = TOKEN_FOR_RANGE_EXC;
+								else if (strncmp(src, "in", 2) != 0)
+									LEX_ERR("invalid loop preposition");
+
+								src += tok->type == TOKEN_FOR_RANGE_EXC ? 4 : 2;
+
+								while (*src && isspace(*src)) {
+									src++;
+									if (*src == '\n') line++;
+								}
+
+								if (tok->type == TOKEN_FOR_RANGE_EXC) {
+									struct expr_token *low_tok = parse_expr(&src, "..", &line);
+									if (!low_tok) {
+										free_token(tokf);
+										return NULL;
+									}
+
+									tok->expr[0] = low_tok;
+
+									if (strncmp(src, "..", 2) != 0) LEX_ERR("expected range");
+									src += 2;
+
+									if (*src == '=') {
+										src++;
+										tok->type = TOKEN_FOR_RANGE_INC;
+									}
+
+									struct expr_token *high_tok = parse_expr(&src, ":", &line);
+									if (!high_tok) {
+										free_token(tokf);
+										return NULL;
+									}
+
+									tok->expr[1] = high_tok;
+								} else {
+									struct expr_token *iter_tok = parse_expr(&src, ":", &line);
+									if (!iter_tok) {
+										free_token(tokf);
+										return NULL;
+									}
+
+									tok->expr[0] = iter_tok;
+								}
+								break;
+
+							case TOKEN_ELSE:
+							case TOKEN_DEFAULT:
+							case TOKEN_END:
+							default:
+								break;
+						}
+
+						if (tok->type != TOKEN_END)
+							if (*(src++) != ':') LEX_ERR("expected colon");
+						break;
+				}
+			}
+
+			cspan = src;
+		} else if (c == '\n') {
+			line++;
+		}
+	}
+
+	if (src > cspan + 1) {
+		LEX_ADD(TOKEN_SPAN);
+		tok->ident = astrndup(cspan, src - cspan);
+	}
+
+	return tokf;
+}
+
 static size_t file_emit(const char *data, void *file) {
 	return fputs(data, (FILE *) file) == EOF ? 0 : 1;
 }
