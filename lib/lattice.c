@@ -491,7 +491,7 @@ static struct expr_lexeme *lex_expr(
 	.message = format(__VA_ARGS__), \
 })
 
-static struct expr_token *parse_expr(struct expr_lexeme **lexp);
+static struct expr_token *parse_ternary(struct expr_lexeme **lexp);
 
 static struct expr_token *parse_primary(struct expr_lexeme **lexp) {
 	struct expr_lexeme *lex;
@@ -530,7 +530,7 @@ static struct expr_token *parse_primary(struct expr_lexeme **lexp) {
 	}
 
 	if (PARSE_MATCH(LEX_LPAREN)) {
-		tok = parse_expr(lexp);
+		tok = parse_ternary(lexp);
 		if (!tok || PARSE_MATCH(LEX_RPAREN)) return tok;
 
 		free_expr_token(tok);
@@ -542,7 +542,7 @@ static struct expr_token *parse_primary(struct expr_lexeme **lexp) {
 		struct expr_token *value = NULL, *last, *next;
 		if (!PARSE_MATCH(LEX_RBRACK)) {
 			do {
-				next = parse_expr(lexp);
+				next = parse_ternary(lexp);
 				if (!next) return NULL;
 
 				if (value) {
@@ -569,7 +569,7 @@ static struct expr_token *parse_primary(struct expr_lexeme **lexp) {
 		struct expr_token *value = NULL, *lastv, *nextv;
 		if (!PARSE_MATCH(LEX_RBRACE)) {
 			do {
-				nextk = parse_expr(lexp);
+				nextk = parse_ternary(lexp);
 				if (!nextk) return NULL;
 
 				if (key) {
@@ -586,7 +586,7 @@ static struct expr_token *parse_primary(struct expr_lexeme **lexp) {
 					return NULL;
 				}
 
-				nextv = parse_expr(lexp);
+				nextv = parse_ternary(lexp);
 				if (!nextv) return NULL;
 
 				if (value) {
@@ -638,7 +638,7 @@ static struct expr_token *parse_call(struct expr_lexeme **lexp) {
 					struct expr_token *arg = NULL, *last, *next;
 					if (!PARSE_MATCH(LEX_RPAREN)) {
 						do {
-							next = parse_expr(lexp);
+							next = parse_ternary(lexp);
 							if (!next) {
 								free_expr_token(tok);
 								return NULL;
@@ -669,7 +669,7 @@ static struct expr_token *parse_call(struct expr_lexeme **lexp) {
 				return NULL;
 			}
 		} else if (PARSE_MATCH(LEX_LBRACK)) {
-			struct expr_token *index = parse_expr(lexp);
+			struct expr_token *index = parse_ternary(lexp);
 			if (!index) {
 				free_expr_token(tok);
 				return NULL;
@@ -776,7 +776,7 @@ static struct expr_token *parse_binary(struct expr_lexeme **lexp, size_t prec) {
 	return tok;
 }
 
-static struct expr_token *parse_expr(struct expr_lexeme **lexp) {
+static struct expr_token *parse_ternary(struct expr_lexeme **lexp) {
 	struct expr_lexeme *lex;
 	struct expr_token *tok = parse_binary(lexp, 0);
 	if (!tok) return NULL;
@@ -811,6 +811,42 @@ static struct expr_token *parse_expr(struct expr_lexeme **lexp) {
 	}
 
 	return tok;
+}
+
+static struct expr_token *parse_expr(
+	const char **expr,
+	const char *term,
+	int *line
+) {
+	struct expr_lexeme *expr_lex = lex_expr(expr, term, line);
+
+	if (!expr_lex) return NULL;
+
+	struct expr_lexeme *expr_lext = expr_lex;
+	struct expr_token *expr_tok = parse_ternary(&expr_lext);
+
+	if (expr_lext) {
+		set_error((lattice_error) {
+			.line = *line,
+			.code = LATTICE_SYNTAX_ERROR,
+			.message = astrdup("extra tokens in expression"),
+		});
+
+		free_expr_lexeme(expr_lex);
+		free_expr_token(expr_tok);
+		return NULL;
+	}
+
+	free_expr_lexeme(expr_lex);
+
+	if (!expr_tok)
+		set_error((lattice_error) {
+			.line = *line,
+			.code = LATTICE_SYNTAX_ERROR,
+			.message = astrdup("unterminated expression in substitution"),
+		});
+
+	return expr_tok;
 }
 
 static bool value_truthy(const void *value, lattice_iface iface) {
