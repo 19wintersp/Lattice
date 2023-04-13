@@ -70,14 +70,19 @@ typedef struct lattice_error {
 
 typedef size_t (*lattice_emit)(const char *data, void *ctx);
 
-#define _LATTICE_IMPL(ns, ty, name, ...) size_t lattice ## ns ## name( \
+#define LATTICE_IMPL(ns, ty, name, ...) size_t lattice ## ns ## name( \
 	const char *template, ty root, __VA_ARGS__, lattice_opts)
-#define _LATTICE_IMPLS(ns, ty, ...) \
-	_LATTICE_IMPL(ns, ty, _file, FILE *file __VA_OPT__(,) __VA_ARGS__); \
-	_LATTICE_IMPL(ns, ty, _buffer, char **buffer __VA_OPT__(,) __VA_ARGS__); \
-	_LATTICE_IMPL(ns, ty, , lattice_emit, void *ctx __VA_OPT__(,) __VA_ARGS__)
+#define LATTICE_IMPLS(ns, ty, ...) \
+	LATTICE_IMPL(ns, ty, _file, FILE *file __VA_OPT__(,) __VA_ARGS__); \
+	LATTICE_IMPL(ns, ty, _buffer, char **buffer __VA_OPT__(,) __VA_ARGS__); \
+	LATTICE_IMPL(ns, ty, , lattice_emit, void *ctx __VA_OPT__(,) __VA_ARGS__)
 
-_LATTICE_IMPLS(, const void *, lattice_iface);
+LATTICE_IMPLS(, const void *, lattice_iface);
+
+#ifndef LATTICE_INSIDE
+#undef LATTICE_IMPL
+#undef LATTICE_IMPLS
+#endif // ifndef LATTICE_INSIDE
 
 const lattice_error *lattice_get_error();
 

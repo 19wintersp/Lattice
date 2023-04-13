@@ -3,8 +3,13 @@
 
 #include <jansson.h>
 
+#define LATTICE_INSIDE
 #include "lattice.h"
+#undef LATTICE_INSIDE
 
-_LATTICE_IMPLS(_jansson, const json_t *);
+LATTICE_IMPLS(_jansson, const json_t *);
+
+#undef LATTICE_IMPL
+#undef LATTICE_IMPLS
 
 #endif // ifndef LATTICE_JANSSON_H
