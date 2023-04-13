@@ -389,7 +389,7 @@ static struct expr_lexeme *lex_expr(
 
 							if (**expr == '+' || **expr == '-') (*expr)++;
 
-							char *sexpr = *expr;
+							const char *sexpr = *expr;
 							while (isdigit(**expr)) (*expr)++;
 
 							if (*expr == sexpr) {
@@ -1113,7 +1113,7 @@ static void *eval_expr(
 
 					iface.free(lhs); iface.free(rhs);
 					ref = iface.create(LATTICE_TYPE_STRING, value);
-					free(value.string);
+					free((char *) value.string);
 					return ref;
 				} else {
 					void *catarray = iface.create(LATTICE_TYPE_ARRAY, value);
@@ -1152,7 +1152,7 @@ static void *eval_expr(
 
 					iface.free(lhs); iface.free(rhs);
 					ref = iface.create(LATTICE_TYPE_STRING, value);
-					free(value.string);
+					free((char *) value.string);
 					return ref;
 				} else {
 					void *catarray = iface.create(LATTICE_TYPE_ARRAY, value);
