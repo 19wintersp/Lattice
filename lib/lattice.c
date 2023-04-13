@@ -1710,7 +1710,7 @@ static struct token *lex(const char *src) {
 	return tokf;
 }
 
-static void *parse(struct token **tokp) {
+static void *parse_level(struct token **tokp) {
 	struct token *parent = (*tokp)->prev;
 	if (parent) parent->child = *tokp;
 
@@ -1737,7 +1737,7 @@ static void *parse(struct token **tokp) {
 					if ((*tokp)->type == TOKEN_CASE || (*tokp)->type == TOKEN_DEFAULT) {
 						*tokp = (*tokp)->next;
 						(*tokp)->prev->next = NULL;
-						if (!parse(tokp)) return NULL;
+						if (!parse_level(tokp)) return NULL;
 					}
 
 					if ((*tokp)->type == TOKEN_END) {
@@ -1806,7 +1806,7 @@ static void *parse(struct token **tokp) {
 				}
 			default:
 				*tokp = (*tokp)->next;
-				if (!parse(tokp)) return NULL;
+				if (!parse_level(tokp)) return NULL;
 				break;
 		}
 	}
@@ -1822,6 +1822,16 @@ static void *parse(struct token **tokp) {
 	}
 
 	return (void *) 1;
+}
+
+static struct token *parse(const char *src) {
+	struct token *tok = lex(src), *tokt = tok;
+	if (!tok) return NULL;
+
+	void *ok = parse_level(&tokt);
+	if (!ok) return NULL;
+
+	return tok;
 }
 
 static size_t file_emit(const char *data, void *file) {
