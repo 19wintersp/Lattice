@@ -1710,6 +1710,120 @@ static struct token *lex(const char *src) {
 	return tokf;
 }
 
+static void *parse(struct token **tokp) {
+	struct token *parent = (*tokp)->prev;
+	if (parent) parent->child = *tokp;
+
+	(*tokp)->prev = NULL;
+
+	for (; *tokp; *tokp = (*tokp)->next) {
+		(*tokp)->parent = parent;
+
+		switch ((*tokp)->type) {
+			case TOKEN_SPAN:
+			case TOKEN_SUB_ESC:
+			case TOKEN_SUB_RAW:
+			case TOKEN_INCLUDE:
+				break;
+
+			case TOKEN_SWITCH: {}
+				struct token *swtch = *tokp;
+				swtch->child = (*tokp)->next;
+				(*tokp)->next->prev = NULL;
+
+				for (*tokp = (*tokp)->next; *tokp; *tokp = (*tokp)->next) {
+					(*tokp)->parent = swtch;
+
+					if ((*tokp)->type == TOKEN_CASE || (*tokp)->type == TOKEN_DEFAULT) {
+						*tokp = (*tokp)->next;
+						(*tokp)->prev->next = NULL;
+						if (!parse(tokp)) return NULL;
+					}
+
+					if ((*tokp)->type == TOKEN_END) {
+						swtch->next = (*tokp)->next;
+						if ((*tokp)->prev) (*tokp)->prev->next = NULL;
+						if ((*tokp)->next) (*tokp)->next->prev = swtch;
+
+						free(*tokp);
+						*tokp = swtch;
+						break;
+					}
+				}
+
+				break;
+
+			case TOKEN_CASE:
+			case TOKEN_DEFAULT:
+				if (parent->type != TOKEN_CASE && parent->type != TOKEN_DEFAULT) {
+					set_error((lattice_error) {
+						.line = (*tokp)->line,
+						.code = LATTICE_SYNTAX_ERROR,
+						.message = astrdup("case outside of switch"),
+					});
+
+					return NULL;
+				}
+
+				parent->next = *tokp;
+				if ((*tokp)->prev) (*tokp)->prev->next = NULL;
+				(*tokp)->prev = parent;
+				*tokp = parent;
+				return (void *) 1;
+
+			case TOKEN_END:
+				if (!parent) {
+					set_error((lattice_error) {
+						.line = (*tokp)->line,
+						.code = LATTICE_SYNTAX_ERROR,
+						.message = astrdup("unexpected block terminator"),
+					});
+
+					return NULL;
+				}
+
+				if (parent->type == TOKEN_CASE || parent->type == TOKEN_DEFAULT)
+					return (void *) 1;
+
+				parent->next = (*tokp)->next;
+				if ((*tokp)->prev) (*tokp)->prev->next = NULL;
+				if ((*tokp)->next) (*tokp)->next->prev = parent;
+
+				free(*tokp);
+				*tokp = parent;
+				return (void *) 1;
+
+			case TOKEN_ELIF:
+			case TOKEN_ELSE:
+				if ((*tokp)->prev->type != TOKEN_IF && (*tokp)->prev->type != TOKEN_ELIF) {
+					parent->next = *tokp;
+					if ((*tokp)->prev) (*tokp)->prev->next = NULL;
+					(*tokp)->prev = parent;
+					(*tokp)->parent = parent->parent;
+
+					*tokp = parent;
+					return (void *) 1;
+				}
+			default:
+				*tokp = (*tokp)->next;
+				if (!parse(tokp)) return NULL;
+				break;
+		}
+	}
+
+	if (parent) {
+		set_error((lattice_error) {
+			.line = -1,
+			.code = LATTICE_SYNTAX_ERROR,
+			.message = astrdup("unexpected end of file"),
+		});
+
+		return NULL;
+	}
+
+	return (void *) 1;
+}
+
 static size_t file_emit(const char *data, void *file) {
 	return fputs(data, (FILE *) file) == EOF ? 0 : 1;
 }
