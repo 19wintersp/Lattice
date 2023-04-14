@@ -1569,7 +1569,7 @@ static struct token *lex(const char *src) {
 						break;
 
 					case '<': {}
-						const char *path = src + 1;
+						const char *path = src;
 
 						do {
 							src++;
