@@ -1996,7 +1996,7 @@ static struct token *parse(
 }
 
 static size_t file_emit(const char *data, void *file) {
-	return fputs(data, (FILE *) file) == EOF ? 0 : 1;
+	return fputs(data, (FILE *) file) == EOF ? 0 : strlen(data);
 }
 
 size_t lattice_file(
@@ -2031,7 +2031,7 @@ static size_t buffer_emit(const char *data, void *pctx) {
 	}
 
 	strcpy(*ctx->buffer + offset, data);
-	return 1;
+	return ctx->length - offset;
 }
 
 size_t lattice_buffer(
