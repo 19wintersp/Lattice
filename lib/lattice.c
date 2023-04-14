@@ -1,10 +1,15 @@
 #include <ctype.h>
+#include <dirent.h>
+#include <fcntl.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include <lattice/lattice.h>
 
@@ -1824,12 +1829,168 @@ static void *parse_level(struct token **tokp) {
 	return (void *) 1;
 }
 
-static struct token *parse(const char *src) {
+struct include_stack {
+	const char *name;
+	struct include_stack *below;
+};
+
+static struct token *parse(
+	const char *src,
+	lattice_opts opts,
+	struct include_stack *stack
+);
+
+static void *parse_resolve(
+	struct token *tok,
+	lattice_opts opts,
+	struct include_stack *stack
+) {
+	for (; tok; tok = tok->next) {
+		if (tok->type == TOKEN_INCLUDE) {
+			char *resolved = NULL, *src;
+
+			if (!opts.search || !opts.resolve) {
+				if (opts.resolve) {
+					resolved = opts.resolve(tok->ident);
+					if (!resolved) return NULL;
+				} else {
+					const char *search_cwd[] = { ".", NULL };
+					const char * const *search = opts.search ? opts.search : search_cwd;
+
+					for (; *search; search++) {
+						DIR *dir = opendir(*search);
+						if (!dir) continue;
+
+						int dir_fd = dirfd(dir);
+						if (dir_fd == -1) {
+							closedir(dir);
+							continue;
+						}
+
+						int fd = openat(dir_fd, tok->ident, O_RDONLY);
+						if (fd == -1) {
+							closedir(dir);
+							continue;
+						}
+
+						resolved = malloc(strlen(*search) + strlen(tok->ident) + 2);
+						strcpy(resolved, *search);
+						strcat(resolved, "/");
+						strcat(resolved, tok->ident);
+
+						closedir(dir);
+						close(fd);
+						break;
+					}
+
+					if (!resolved) {
+						set_error((lattice_error) {
+							.line = tok->line,
+							.code = LATTICE_INCLUDE_ERROR,
+							.message = astrdup("failed to resolve include"),
+						});
+
+						return NULL;
+					}
+				}
+
+				for (struct include_stack *part = stack; part; part = part->below) {
+					if (part->name && strcmp(part->name, resolved) == 0) {
+						set_error((lattice_error) {
+							.line = tok->line,
+							.code = LATTICE_INCLUDE_ERROR,
+							.message = format("recursive include of '%s'", resolved),
+						});
+
+						free(resolved);
+						return NULL;
+					}
+				}
+			}
+
+			if (resolved) {
+				struct stat statbuf;
+				if (stat(resolved, &statbuf) == -1) {
+					set_error((lattice_error) {
+						.line = tok->line,
+						.code = LATTICE_INCLUDE_ERROR,
+						.message = astrdup("failed to stat include"),
+					});
+
+					free(resolved);
+					return NULL;
+				}
+
+				int fd = open(resolved, O_RDONLY);
+				if (fd == -1) {
+					set_error((lattice_error) {
+						.line = tok->line,
+						.code = LATTICE_INCLUDE_ERROR,
+						.message = astrdup("failed to open include"),
+					});
+
+					free(resolved);
+					return NULL;
+				}
+
+				src = malloc(statbuf.st_size + 1);
+				src[statbuf.st_size] = 0;
+
+				if (read(fd, src, statbuf.st_size) == -1) {
+					set_error((lattice_error) {
+						.line = tok->line,
+						.code = LATTICE_INCLUDE_ERROR,
+						.message = astrdup("failed to read include"),
+					});
+
+					free(resolved);
+					free(src);
+					return NULL;
+				}
+
+				close(fd);
+			} else {
+				src = opts.resolve(tok->ident);
+				if (!src) {
+					set_error((lattice_error) {
+						.line = tok->line,
+						.code = LATTICE_INCLUDE_ERROR,
+						.message = astrdup("failed to resolve include"),
+					});
+
+					return NULL;
+				}
+			}
+
+			struct include_stack new_stack = {
+				.name = resolved,
+				.below = stack,
+			};
+
+			tok->child = parse(src, opts, resolved ? &new_stack : stack);
+
+			free(resolved);
+			free(src);
+
+			if (!tok->child) return NULL;
+		} else {
+			if (!parse_resolve(tok->child, opts, stack)) return NULL;
+		}
+	}
+
+	return (void *) 1;
+}
+
+static struct token *parse(
+	const char *src,
+	lattice_opts opts,
+	struct include_stack *stack
+) {
 	struct token *tok = lex(src), *tokt = tok;
 	if (!tok) return NULL;
 
-	void *ok = parse_level(&tokt);
-	if (!ok) return NULL;
+	if (!parse_level(&tokt)) return NULL;
+	if (!parse_resolve(tok, opts, stack)) return NULL;
 
 	return tok;
 }
