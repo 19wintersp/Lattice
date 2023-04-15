@@ -47,6 +47,7 @@ typedef struct lattice_opts {
 	const char * const *search;
 	char *(*resolve)(const char *);
 	char *(*escape)(const char *);
+	bool ignore_emit_zero;
 } lattice_opts;
 
 typedef enum lattice_error_code {
