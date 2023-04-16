@@ -106,6 +106,18 @@ static void ladd(json_t *obj, const char *key, json_t *value) {
 	}
 }
 
+static void lkeys(const json_t *obj, const char *out[]) {
+	if (json_typeof(obj) != JSON_OBJECT) return;
+
+	size_t i = 0;
+
+	for (
+		const char *key = json_object_iter_key(json_object_iter(obj));
+		key; key = json_object_iter_key(
+			json_object_iter_next(obj, json_object_key_to_iter(key)))
+	) out[i++] = key;
+}
+
 static lattice_iface iface = {
 	.parse  = (void *(*)(const char *, size_t)) lparse,
 	.print  = (char *(*)(const void *)) lprint,
@@ -117,6 +129,7 @@ static lattice_iface iface = {
 	.length = (size_t (*)(const void *)) llength,
 	.get    = (void *(*)(const void *, lattice_index)) lget,
 	.add    = (void (*)(void *, const char *, void *)) ladd,
+	.keys   = (void (*)(const void *, const char *[])) lkeys,
 };
 
 size_t lattice_jansson(

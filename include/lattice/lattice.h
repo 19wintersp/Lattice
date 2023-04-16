@@ -41,6 +41,7 @@ typedef struct lattice_iface {
 	size_t (*length)(const void *);
 	void *(*get)(const void *, lattice_index);
 	void (*add)(void *, const char *, void *);
+	void (*keys)(const void *, const char *[]);
 } lattice_iface;
 
 typedef struct lattice_opts {

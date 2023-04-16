@@ -70,6 +70,15 @@ static void ladd(cJSON *obj, const char *key, cJSON *value) {
 	else if (cJSON_IsObject(obj)) cJSON_AddItemToObject(obj, key, value);
 }
 
+static void lkeys(const cJSON *obj, const char *out[]) {
+	if (!cJSON_IsObject(obj)) return;
+
+	size_t i = 0;
+	cJSON *item;
+
+	cJSON_ArrayForEach(item, obj) out[i++] = item->string;
+}
+
 static lattice_iface iface = {
 	.parse  = (void *(*)(const char *, size_t)) lparse,
 	.print  = (char *(*)(const void *)) lprint,
@@ -81,6 +90,7 @@ static lattice_iface iface = {
 	.length = (size_t (*)(const void *)) llength,
 	.get    = (void *(*)(const void *, lattice_index)) lget,
 	.add    = (void (*)(void *, const char *, void *)) ladd,
+	.keys   = (void (*)(const void *, const char *[])) lkeys,
 };
 
 size_t lattice_cjson(

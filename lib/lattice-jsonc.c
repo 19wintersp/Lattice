@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include <json-c/json_tokener.h>
+#include <json-c/linkhash.h>
 
 #include <lattice/lattice-jsonc.h>
 
@@ -134,6 +135,14 @@ static void ladd(
 	}
 }
 
+static void lkeys(const struct json_object *obj, const char *out[]) {
+	if (json_object_get_type(obj) != json_type_object) return;
+
+	size_t i = 0;
+
+	json_object_object_foreach(obj, key, value) out[i++] = key;
+}
+
 static lattice_iface iface = {
 	.parse  = (void *(*)(const char *, size_t)) lparse,
 	.print  = (char *(*)(const void *)) lprint,
@@ -145,6 +154,7 @@ static lattice_iface iface = {
 	.length = (size_t (*)(const void *)) llength,
 	.get    = (void *(*)(const void *, lattice_index)) lget,
 	.add    = (void (*)(void *, const char *, void *)) ladd,
+	.keys   = (void (*)(const void *, const char *[])) lkeys,
 };
 
 size_t lattice_jsonc(
