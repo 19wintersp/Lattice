@@ -874,6 +874,31 @@ static bool value_truthy(const void *value, lattice_iface iface) {
 	}
 }
 
+static bool value_eq(const void *lhs, const void *rhs, lattice_iface iface) {
+	bool eq_value = false;
+	if (iface.type(lhs) == iface.type(rhs)) {
+		switch (iface.type(lhs)) {
+			case LATTICE_TYPE_NULL:
+				eq_value = true;
+				break;
+
+			case LATTICE_TYPE_BOOLEAN:
+			case LATTICE_TYPE_NUMBER:
+				eq_value = iface.value(lhs).number == iface.value(rhs).number;
+				break;
+
+			case LATTICE_TYPE_STRING:
+				eq_value = strcmp(iface.value(lhs).string, iface.value(rhs).string) == 0;
+				break;
+
+			default:
+				break;
+		}
+	}
+
+	return eq_value;
+}
+
 static void *eval_expr(
 	const struct expr_token *expr,
 	const void *ctx,
@@ -975,28 +1000,7 @@ static void *eval_expr(
 				return NULL;
 			}
 
-			bool eq_value = false;
-			if (iface.type(lhs) == iface.type(rhs)) {
-				switch (iface.type(lhs)) {
-					case LATTICE_TYPE_NULL:
-						eq_value = true;
-						break;
-
-					case LATTICE_TYPE_BOOLEAN:
-					case LATTICE_TYPE_NUMBER:
-						eq_value = iface.value(lhs).number == iface.value(rhs).number;
-						break;
-
-					case LATTICE_TYPE_STRING:
-						eq_value = strcmp(iface.value(lhs).string, iface.value(rhs).string) == 0;
-						break;
-
-					default:
-						break;
-				}
-			}
-
-			value.boolean = (expr->type == EXPR_EQ) == eq_value;
+			value.boolean = (expr->type == EXPR_EQ) == value_eq(lhs, rhs, iface);
 
 			iface.free(lhs); iface.free(rhs);
 			return iface.create(LATTICE_TYPE_BOOLEAN, value);
@@ -1993,6 +1997,397 @@ static struct token *parse(
 	if (!parse_resolve(tok, opts, stack)) return NULL;
 
 	return tok;
+}
+
+#define EVAL_EMIT(str) { \
+	resb = emit(str, emit_ctx); \
+	if (!opts.ignore_emit_zero && resb == 0) { \
+		set_error((lattice_error) { \
+			.line = tok->line, \
+			.code = LATTICE_IO_ERROR, \
+			.message = astrdup("failed to write output"), \
+		}); \
+		return 0; \
+	} else { \
+		res += resb; \
+	} \
+}
+
+size_t eval(
+	struct token *tok,
+	const void *ctx,
+	lattice_emit emit,
+	void *emit_ctx,
+	lattice_iface iface,
+	lattice_opts opts
+) {
+	size_t res = 0, resb;
+	bool was_if = false, end_if;
+	void *value;
+
+	for (; tok; tok = tok->next) {
+		if (tok->type == TOKEN_ELIF || tok->type == TOKEN_ELSE) {
+			if (!was_if) {
+				set_error((lattice_error) {
+					.line = tok->line,
+					.code = LATTICE_SYNTAX_ERROR,
+					.message = astrdup("unexpected subclause"),
+				});
+
+				return 0;
+			}
+
+			if (end_if) continue;
+		}
+
+		switch (tok->type) {
+			case TOKEN_SPAN:
+				EVAL_EMIT(tok->ident);
+				break;
+
+			case TOKEN_SUB_ESC:
+			case TOKEN_SUB_RAW:
+				value = eval_expr(tok->expr[0], ctx, iface);
+				if (!value) return 0;
+
+				char *str = iface.type(value) != LATTICE_TYPE_STRING
+					? iface.print(value)
+					: astrdup(iface.value(value).string);
+				iface.free(value);
+
+				if (!str) {
+					set_error((lattice_error) {
+						.line = tok->line,
+						.code = LATTICE_JSON_ERROR,
+						.message = astrdup("failed to serialise substitution value"),
+					});
+
+					return 0;
+				}
+
+				if (tok->type == TOKEN_SUB_ESC) {
+					char *str_new;
+					if (opts.escape) {
+						str_new = opts.escape(str);
+					} else {
+						int i, extd = 0;
+						for (i = 0; str[i]; i++) {
+							switch (str[i]) {
+								case '&':
+								case '\'':
+								case '"':
+								case '<':
+								case '>':
+									extd += 4;
+									break;
+
+								default:
+									break;
+							}
+						}
+
+						str_new = malloc(i + extd + 1);
+						str_new[i + extd] = 0;
+
+						for (int j = 0, k = 0; str[j]; j++, k++) {
+							switch (str[j]) {
+								case '&':
+								case '\'':
+								case '"':
+								case '<':
+								case '>':
+									sprintf(str_new + k, "&#%02d;", str[j]);
+									k += 4;
+									break;
+
+								default:
+									str_new[k] = str[j];
+									break;
+							}
+						}
+					}
+
+					free(str);
+					str = str_new;
+				}
+
+				EVAL_EMIT(str);
+				free(str);
+				break;
+
+			case TOKEN_INCLUDE:
+				if (eval(tok->child, ctx, emit, emit_ctx, iface, opts) == 0) return 0;
+				break;
+
+			case TOKEN_IF:
+				value = eval_expr(tok->expr[0], ctx, iface);
+				if (!value) return 0;
+
+				end_if = value_truthy(value, iface);
+				iface.free(value);
+
+				if (end_if)
+					if (eval(tok->child, ctx, emit, emit_ctx, iface, opts) == 0) return 0;
+				break;
+
+			case TOKEN_ELIF:
+				value = eval_expr(tok->expr[0], ctx, iface);
+				if (!value) return 0;
+
+				end_if = value_truthy(value, iface);
+				iface.free(value);
+
+				if (end_if)
+					if (eval(tok->child, ctx, emit, emit_ctx, iface, opts) == 0) return 0;
+				break;
+
+			case TOKEN_ELSE:
+				if (eval(tok->child, ctx, emit, emit_ctx, iface, opts) == 0) return 0;
+				break;
+
+			case TOKEN_SWITCH:
+				value = eval_expr(tok->expr[0], ctx, iface);
+				if (!value) return 0;
+
+				for (struct token *child = tok->child; child; child = child->next) {
+					if (child->type == TOKEN_CASE) {
+						void *branch = eval_expr(child->expr[0], ctx, iface);
+						bool eq = value_eq(value, branch, iface);
+						iface.free(branch);
+
+						if (eq) {
+							if (eval(child->child, ctx, emit, emit_ctx, iface, opts) == 0) {
+								iface.free(value);
+								return 0;
+							}
+
+							break;
+						}
+					} else if (child->type == TOKEN_DEFAULT) {
+						if (child->next) {
+							set_error((lattice_error) {
+								.line = child->line,
+								.code = LATTICE_SYNTAX_ERROR,
+								.message = astrdup("cannot have case after default"),
+							});
+
+							iface.free(value);
+							return 0;
+						}
+
+						if (eval(child->child, ctx, emit, emit_ctx, iface, opts) == 0) {
+							iface.free(value);
+							return 0;
+						}
+					}
+				}
+
+				iface.free(value);
+				break;
+
+			case TOKEN_FOR_RANGE_EXC:
+			case TOKEN_FOR_RANGE_INC:
+			case TOKEN_FOR_ITER: {}
+				bool anon_for = strcmp(tok->ident, "_") == 0;
+
+				if (iface.type(ctx) != LATTICE_TYPE_OBJECT && !anon_for) {
+					set_error((lattice_error) {
+						.line = tok->line,
+						.code = LATTICE_TYPE_ERROR,
+						.message = astrdup("cannot bind in non-object scope"),
+					});
+
+					return 0;
+				}
+
+				void *from = eval_expr(tok->expr[0], ctx, iface), *to = NULL;
+				if (!from) return 0;
+
+				if (tok->type == TOKEN_FOR_ITER) {
+					switch (iface.type(from)) {
+						case LATTICE_TYPE_STRING:
+						case LATTICE_TYPE_ARRAY:
+						case LATTICE_TYPE_OBJECT:
+							break;
+
+						default:
+							set_error((lattice_error) {
+								.line = tok->line,
+								.code = LATTICE_TYPE_ERROR,
+								.message = astrdup("loop values must be iterable"),
+							});
+
+							iface.free(from);
+							return 0;
+					}
+				} else {
+					to = eval_expr(tok->expr[1], ctx, iface);
+					if (!to) {
+						iface.free(from);
+						return 0;
+					}
+
+					if (
+						iface.type(from) != LATTICE_TYPE_NUMBER ||
+						iface.type(to) != LATTICE_TYPE_NUMBER
+					) {
+						set_error((lattice_error) {
+							.line = tok->line,
+							.code = LATTICE_TYPE_ERROR,
+							.message = astrdup("loop indices must be numbers"),
+						});
+
+						iface.free(from);
+						iface.free(to);
+						return 0;
+					}
+				}
+
+				size_t scope_length = iface.length(ctx), remove_index = scope_length;
+				const char **scope_keys = malloc(sizeof(const char*) * scope_length);
+
+				if (!anon_for) {
+					iface.keys(ctx, scope_keys);
+
+					for (size_t i = 0; i < scope_length; i++) {
+						if (strcmp(scope_keys[i], tok->ident) == 0) {
+							remove_index = i;
+							break;
+						}
+					}
+				}
+
+				double from_num, to_num;
+				size_t from_length;
+				const char **from_keys = NULL;
+
+				if (tok->type == TOKEN_FOR_ITER) {
+					from_length = iface.length(from);
+
+					if (iface.type(from) == LATTICE_TYPE_OBJECT) {
+						from_keys = malloc(sizeof(const char *) * from_length);
+						iface.keys(from, from_keys);
+					}
+				} else {
+					from_num = iface.value(from).number;
+					double to_num_off = tok->type == TOKEN_FOR_RANGE_INC ? 1 : 0;
+					to_num = iface.value(to).number + to_num_off;
+				}
+
+				if (tok->type != TOKEN_FOR_ITER) iface.free(from);
+				if (to) iface.free(to);
+
+				for (size_t i = 0;; i++) {
+					if (tok->type == TOKEN_FOR_ITER) {
+						if (i >= from_length) break;
+					} else {
+						if (from_num >= to_num) break;
+					}
+
+					const void *scope = ctx;
+
+					if (!anon_for) {
+						scope = iface.create(LATTICE_TYPE_OBJECT, (lattice_value) {});
+						for (size_t i = 0; i < scope_length; i++)
+							if (i != remove_index)
+								iface.add((void *) scope, scope_keys[i], iface.clone(
+									iface.get(ctx, (lattice_index) { .object = scope_keys[i] })
+								));
+
+						void *bind;
+						if (tok->type == TOKEN_FOR_ITER) {
+							switch (iface.type(from)) {
+								case LATTICE_TYPE_STRING: {}
+									char slice[2] = { iface.value(from).string[i], 0 };
+									bind = iface.create(
+										LATTICE_TYPE_STRING,
+										(lattice_value) { .string = slice }
+									);
+									break;
+
+								case LATTICE_TYPE_ARRAY:
+									bind = iface.clone(
+										iface.get(from, (lattice_index) { .array = i })
+									);
+									break;
+
+								case LATTICE_TYPE_OBJECT:
+									bind = iface.create(
+										LATTICE_TYPE_STRING,
+										(lattice_value) { .string = from_keys[i] }
+									);
+									break;
+
+								default: return 0;
+							}
+						} else {
+							bind = iface.create(
+								LATTICE_TYPE_NUMBER,
+								(lattice_value) { .number = from_num }
+							);
+						}
+
+						iface.add((void *) scope, tok->ident, bind);
+					}
+
+					resb = eval(tok->child, scope, emit, emit_ctx, iface, opts);
+					res += resb;
+
+					if (!anon_for) iface.free((void *) scope);
+
+					if (resb == 0) {
+						free(scope_keys);
+						if (tok->type == TOKEN_FOR_ITER) iface.free(from);
+						if (from_keys) free(from_keys);
+						return 0;
+					}
+
+					if (tok->type != TOKEN_FOR_ITER) {
+						from_num++;
+					}
+				}
+
+				free(scope_keys);
+				if (tok->type == TOKEN_FOR_ITER) iface.free(from);
+				if (from_keys) free(from_keys);
+				break;
+
+			case TOKEN_WITH:
+				value = eval_expr(tok->expr[0], ctx, iface);
+				if (!value) return 0;
+
+				if (eval(tok->child, value, emit, emit_ctx, iface, opts) == 0) return 0;
+
+				iface.free(value);
+				break;
+
+			case TOKEN_CASE:
+			case TOKEN_DEFAULT:
+			case TOKEN_END:
+				break;
+		}
+
+		was_if = tok->type == TOKEN_IF || tok->type == TOKEN_ELIF;
+	}
+
+	return res;
+}
+
+size_t lattice(
+	const char *template,
+	const void *root,
+	lattice_emit emit,
+	void *emit_ctx,
+	lattice_iface iface,
+	lattice_opts opts
+) {
+	struct token *tok = parse(template, opts, NULL);
+	if (!tok) return 0;
+
+	size_t res = eval(tok, root, emit, emit_ctx, iface, opts);
+
+	free_token(tok);
+	return res;
 }
 
 static size_t file_emit(const char *data, void *file) {
