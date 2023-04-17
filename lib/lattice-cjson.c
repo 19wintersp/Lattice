@@ -97,25 +97,28 @@ size_t lattice_cjson(
 	const char *template,
 	const cJSON *root,
 	size_t (*emit)(const char *data, void *ctx), void *ctx,
-	lattice_opts opts
+	lattice_opts opts,
+	lattice_error **errp
 ) {
-	return lattice(template, root, emit, ctx, iface, opts);
+	return lattice(template, root, emit, ctx, iface, opts, errp);
 }
 
 size_t lattice_cjson_file(
 	const char *template,
 	const cJSON *root,
 	FILE *file,
-	lattice_opts opts
+	lattice_opts opts,
+	lattice_error **errp
 ) {
-	return lattice_file(template, root, file, iface, opts);
+	return lattice_file(template, root, file, iface, opts, errp);
 }
 
 size_t lattice_cjson_buffer(
 	const char *template,
 	const cJSON *root,
 	char **buffer,
-	lattice_opts opts
+	lattice_opts opts,
+	lattice_error **errp
 ) {
-	return lattice_buffer(template, root, buffer, iface, opts);
+	return lattice_buffer(template, root, buffer, iface, opts, errp);
 }

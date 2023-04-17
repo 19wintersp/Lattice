@@ -40,15 +40,31 @@ static char *format(const char *fmt, ...) {
 	return buffer;
 }
 
-static lattice_error error;
-
-static void set_error(lattice_error new_error) {
-	free(error.message);
-	error = new_error;
+void lattice_error_free(lattice_error *err) {
+	if (err) {
+		free(err->message);
+		free(err);
+	}
 }
 
-const lattice_error *lattice_get_error() {
-	return &error;
+static lattice_error *set_error(
+	lattice_error **errp,
+	int line,
+	enum lattice_error_code code,
+	const char *message
+) {
+	if (errp) {
+		*errp = malloc(sizeof(lattice_error));
+		**errp = (lattice_error) {
+			.line = line,
+			.code = code,
+			.message = astrdup(message),
+		};
+
+		return *errp;
+	} else {
+		return NULL;
+	}
 }
 
 struct expr_lexeme {
@@ -228,7 +244,8 @@ static void free_token(struct token *token) {
 static struct expr_lexeme *lex_expr(
 	const char **expr,
 	const char *term,
-	int *line
+	int *line,
+	lattice_error **errp
 ) {
 	size_t tlen = term ? strlen(term) : 0;
 
@@ -301,11 +318,8 @@ static struct expr_lexeme *lex_expr(
 								char lo = *((*expr)++);
 
 								if (!isxdigit(hi) || !isxdigit(lo)) {
-									set_error((lattice_error) {
-										.line = *line,
-										.code = LATTICE_SYNTAX_ERROR,
-										.message = astrdup("invalid hex literal"),
-									});
+									set_error(errp, *line,
+										LATTICE_SYNTAX_ERROR, "invalid hex literal");
 
 									free(contents);
 									free_expr_lexeme(lexf);
@@ -320,11 +334,8 @@ static struct expr_lexeme *lex_expr(
 								break;
 
 							default:
-								set_error((lattice_error) {
-									.line = *line,
-									.code = LATTICE_SYNTAX_ERROR,
-									.message = format("invalid string escape '%c'", *(*expr - 1)),
-								});
+								set_error(errp, *line,
+									LATTICE_SYNTAX_ERROR, "invalid string escape");
 
 								free(contents);
 								free_expr_lexeme(lexf);
@@ -354,11 +365,8 @@ static struct expr_lexeme *lex_expr(
 
 							default:
 								if (isdigit(**expr)) {
-									set_error((lattice_error) {
-										.line = *line,
-										.code = LATTICE_SYNTAX_ERROR,
-										.message = astrdup("decimal literal with leading zero"),
-									});
+									set_error(errp, *line,
+										LATTICE_SYNTAX_ERROR, "decimal literal with leading zero");
 
 									free_expr_lexeme(lexf);
 									return NULL;
@@ -398,11 +406,8 @@ static struct expr_lexeme *lex_expr(
 							while (isdigit(**expr)) (*expr)++;
 
 							if (*expr == sexpr) {
-								set_error((lattice_error) {
-									.line = *line,
-									.code = LATTICE_SYNTAX_ERROR,
-									.message = astrdup("exponent cannot be empty"),
-								});
+								set_error(errp, *line,
+									LATTICE_SYNTAX_ERROR, "exponent cannot be empty");
 
 								free_expr_lexeme(lexf);
 								return NULL;
@@ -418,11 +423,8 @@ static struct expr_lexeme *lex_expr(
 						LEX_ADD(LEX_NUMBER);
 						lex->data.number = number;
 					} else {
-						set_error((lattice_error) {
-							.line = *line,
-							.code = LATTICE_SYNTAX_ERROR,
-							.message = format("unexpected character '%c'", **expr),
-						});
+						set_error(errp, *line,
+							LATTICE_SYNTAX_ERROR, "unexpected character");
 
 						free_expr_lexeme(lexf);
 						return NULL;
@@ -447,11 +449,8 @@ static struct expr_lexeme *lex_expr(
 
 					if (lex->type != LEX_IDENT) free(ident);
 				} else if (!isspace(c)) {
-					set_error((lattice_error) {
-						.line = *line,
-						.code = LATTICE_SYNTAX_ERROR,
-						.message = format("unexpected character '%c'", c),
-					});
+					set_error(errp, *line,
+						LATTICE_SYNTAX_ERROR, "unexpected character");
 
 					free_expr_lexeme(lexf);
 					return NULL;
@@ -490,15 +489,16 @@ static struct expr_lexeme *lex_expr(
 #define PARSE_TOK(...) \
 	struct expr_token s = { .line = lex->line, __VA_ARGS__ }; \
 	tok = calloc(1, sizeof(struct expr_token)); *tok = s;
-#define PARSE_ERR(...) set_error((lattice_error) { \
-	.line = lex->line, \
-	.code = LATTICE_SYNTAX_ERROR, \
-	.message = format(__VA_ARGS__), \
-})
 
-static struct expr_token *parse_ternary(struct expr_lexeme **lexp);
+static struct expr_token *parse_ternary(
+	struct expr_lexeme **lexp,
+	lattice_error **errp
+);
 
-static struct expr_token *parse_primary(struct expr_lexeme **lexp) {
+static struct expr_token *parse_primary(
+	struct expr_lexeme **lexp,
+	lattice_error **errp
+) {
 	struct expr_lexeme *lex;
 	struct expr_token *tok;
 
@@ -535,11 +535,13 @@ static struct expr_token *parse_primary(struct expr_lexeme **lexp) {
 	}
 
 	if (PARSE_MATCH(LEX_LPAREN)) {
-		tok = parse_ternary(lexp);
+		tok = parse_ternary(lexp, errp);
 		if (!tok || PARSE_MATCH(LEX_RPAREN)) return tok;
 
+		set_error(errp, lex->line,
+			LATTICE_SYNTAX_ERROR, "expected closing parenthesis after group");
+
 		free_expr_token(tok);
-		PARSE_ERR("expected closing parenthesis after group");
 		return NULL;
 	}
 
@@ -547,7 +549,7 @@ static struct expr_token *parse_primary(struct expr_lexeme **lexp) {
 		struct expr_token *value = NULL, *last, *next;
 		if (!PARSE_MATCH(LEX_RBRACK)) {
 			do {
-				next = parse_ternary(lexp);
+				next = parse_ternary(lexp, errp);
 				if (!next) return NULL;
 
 				if (value) {
@@ -559,8 +561,10 @@ static struct expr_token *parse_primary(struct expr_lexeme **lexp) {
 			} while (PARSE_MATCH(LEX_COMMA));
 
 			if (!PARSE_MATCH(LEX_RBRACK)) {
+				set_error(errp, lex->line,
+					LATTICE_SYNTAX_ERROR, "expected closing bracket after array values");
+
 				free_expr_token(value);
-				PARSE_ERR("expected closing bracket after array values");
 				return NULL;
 			}
 		}
@@ -574,7 +578,7 @@ static struct expr_token *parse_primary(struct expr_lexeme **lexp) {
 		struct expr_token *value = NULL, *lastv, *nextv;
 		if (!PARSE_MATCH(LEX_RBRACE)) {
 			do {
-				nextk = parse_ternary(lexp);
+				nextk = parse_ternary(lexp, errp);
 				if (!nextk) return NULL;
 
 				if (key) {
@@ -585,13 +589,15 @@ static struct expr_token *parse_primary(struct expr_lexeme **lexp) {
 				}
 
 				if (!PARSE_MATCH(LEX_COLON)) {
+					set_error(errp, lex->line,
+						LATTICE_SYNTAX_ERROR, "expected colon after object key");
+
 					free_expr_token(key);
 					free_expr_token(value);
-					PARSE_ERR("expected colon after object key");
 					return NULL;
 				}
 
-				nextv = parse_ternary(lexp);
+				nextv = parse_ternary(lexp, errp);
 				if (!nextv) return NULL;
 
 				if (value) {
@@ -603,9 +609,11 @@ static struct expr_token *parse_primary(struct expr_lexeme **lexp) {
 			} while (PARSE_MATCH(LEX_COMMA));
 
 			if (!PARSE_MATCH(LEX_RBRACE)) {
+				set_error(errp, lex->line,
+					LATTICE_SYNTAX_ERROR, "expected closing brace after object entries");
+
 				free_expr_token(key);
 				free_expr_token(value);
-				PARSE_ERR("expected closing brace after object entries");
 				return NULL;
 			}
 		}
@@ -614,19 +622,20 @@ static struct expr_token *parse_primary(struct expr_lexeme **lexp) {
 		return tok;
 	}
 
-	if ((lex = *lexp)) PARSE_ERR("expected expression");
-	else set_error((lattice_error) {
-		.line = 0,
-		.code = LATTICE_SYNTAX_ERROR,
-		.message = astrdup("unexpected end of file"),
-	});
+	if ((lex = *lexp))
+		set_error(errp, lex->line, LATTICE_SYNTAX_ERROR, "expected expression");
+	else
+		set_error(errp, 0, LATTICE_SYNTAX_ERROR, "unexpected end of file");
 
 	return NULL;
 }
 
-static struct expr_token *parse_call(struct expr_lexeme **lexp) {
+static struct expr_token *parse_call(
+	struct expr_lexeme **lexp,
+	lattice_error **errp
+) {
 	struct expr_lexeme *lex;
-	struct expr_token *tok = parse_primary(lexp);
+	struct expr_token *tok = parse_primary(lexp, errp);
 	if (!tok) return NULL;
 
 	for (;;) {
@@ -643,7 +652,7 @@ static struct expr_token *parse_call(struct expr_lexeme **lexp) {
 					struct expr_token *arg = NULL, *last, *next;
 					if (!PARSE_MATCH(LEX_RPAREN)) {
 						do {
-							next = parse_ternary(lexp);
+							next = parse_ternary(lexp, errp);
 							if (!next) {
 								free_expr_token(tok);
 								return NULL;
@@ -658,9 +667,11 @@ static struct expr_token *parse_call(struct expr_lexeme **lexp) {
 						} while (PARSE_MATCH(LEX_COMMA));
 
 						if (!PARSE_MATCH(LEX_RPAREN)) {
+							set_error(errp, lex->line,
+								LATTICE_SYNTAX_ERROR, "expected closing parenthesis after arguments");
+
 							free_expr_token(tok);
 							free_expr_token(arg);
-							PARSE_ERR("expected closing parenthesis after arguments");
 							return NULL;
 						}
 					}
@@ -669,21 +680,25 @@ static struct expr_token *parse_call(struct expr_lexeme **lexp) {
 					tok->item[2].expr = arg;
 				}
 			} else {
+				set_error(errp, lex->line,
+					LATTICE_SYNTAX_ERROR, "expected identifier after dot");
+
 				free_expr_token(tok);
-				PARSE_ERR("expected identifier after dot");
 				return NULL;
 			}
 		} else if (PARSE_MATCH(LEX_LBRACK)) {
-			struct expr_token *index = parse_ternary(lexp);
+			struct expr_token *index = parse_ternary(lexp, errp);
 			if (!index) {
 				free_expr_token(tok);
 				return NULL;
 			}
 
 			if (!PARSE_MATCH(LEX_RBRACK)) {
+				set_error(errp, lex->line,
+					LATTICE_SYNTAX_ERROR, "expected closing bracket after subscription");
+
 				free_expr_token(tok);
 				free_expr_token(index);
-				PARSE_ERR("expected closing bracket after subscription");
 				return NULL;
 			}
 
@@ -704,13 +719,16 @@ static struct {
 	{ LEX_COMP, EXPR_COMP },
 };
 
-static struct expr_token *parse_unary(struct expr_lexeme **lexp) {
+static struct expr_token *parse_unary(
+	struct expr_lexeme **lexp,
+	lattice_error **errp
+) {
 	struct expr_lexeme *lex;
 	struct expr_token *tok;
 
 	for (size_t i = 0; i < sizeof(unary_op) / sizeof(unary_op[0]); i++) {
 		if (PARSE_MATCH(unary_op[i].lex)) {
-			tok = parse_unary(lexp);
+			tok = parse_unary(lexp, errp);
 			if (!tok) return NULL;
 
 			PARSE_TOK(.type = unary_op[i].expr, .item[0].expr = tok);
@@ -718,7 +736,7 @@ static struct expr_token *parse_unary(struct expr_lexeme **lexp) {
 		}
 	}
 
-	return parse_call(lexp);
+	return parse_call(lexp, errp);
 }
 
 static int binary_op_prec[] = { 0, 2, 8, 11, 13, 18 };
@@ -746,12 +764,15 @@ static struct {
 	{ LEX_MOD,  EXPR_MOD },
 };
 
-static struct expr_token *parse_binary(struct expr_lexeme **lexp, size_t prec) {
+static struct expr_token *parse_binary(
+	struct expr_lexeme **lexp, size_t prec,
+	lattice_error **errp
+) {
 	if (prec >= sizeof(binary_op_prec) / sizeof(binary_op_prec[0]))
-		return parse_unary(lexp);
+		return parse_unary(lexp, errp);
 
 	struct expr_lexeme *lex;
-	struct expr_token *tok = parse_binary(lexp, prec + 1);
+	struct expr_token *tok = parse_binary(lexp, prec + 1, errp);
 	if (!tok) return NULL;
 
 	for (;;) {
@@ -760,7 +781,7 @@ static struct expr_token *parse_binary(struct expr_lexeme **lexp, size_t prec) {
 				PARSE_TOK(
 					.type = binary_op[i].expr,
 					.item[0].expr = tok,
-					.item[1].expr = parse_binary(lexp, prec + 1)
+					.item[1].expr = parse_binary(lexp, prec + 1, errp)
 				);
 
 				if (!tok->item[1].expr) {
@@ -781,26 +802,31 @@ static struct expr_token *parse_binary(struct expr_lexeme **lexp, size_t prec) {
 	return tok;
 }
 
-static struct expr_token *parse_ternary(struct expr_lexeme **lexp) {
+static struct expr_token *parse_ternary(
+	struct expr_lexeme **lexp,
+	lattice_error **errp
+) {
 	struct expr_lexeme *lex;
-	struct expr_token *tok = parse_binary(lexp, 0);
+	struct expr_token *tok = parse_binary(lexp, 0, errp);
 	if (!tok) return NULL;
 
 	if (PARSE_MATCH(LEX_OPT)) {
-		struct expr_token *branch1 = parse_binary(lexp, 0);
+		struct expr_token *branch1 = parse_binary(lexp, 0, errp);
 		if (!branch1) {
 			free_expr_token(tok);
 			return NULL;
 		}
 
 		if (!PARSE_MATCH(LEX_COLON)) {
+			set_error(errp, lex->line,
+				LATTICE_SYNTAX_ERROR, "expected colon for ternary");
+
 			free_expr_token(tok);
 			free_expr_token(branch1);
-			PARSE_ERR("expected colon for ternary");
 			return NULL;
 		}
 
-		struct expr_token *branch2 = parse_binary(lexp, 0);
+		struct expr_token *branch2 = parse_binary(lexp, 0, errp);
 		if (!branch2) {
 			free_expr_token(tok);
 			free_expr_token(branch1);
@@ -821,21 +847,18 @@ static struct expr_token *parse_ternary(struct expr_lexeme **lexp) {
 static struct expr_token *parse_expr(
 	const char **expr,
 	const char *term,
-	int *line
+	int *line,
+	lattice_error **errp
 ) {
-	struct expr_lexeme *expr_lex = lex_expr(expr, term, line);
+	struct expr_lexeme *expr_lex = lex_expr(expr, term, line, errp);
 
 	if (!expr_lex) return NULL;
 
 	struct expr_lexeme *expr_lext = expr_lex;
-	struct expr_token *expr_tok = parse_ternary(&expr_lext);
+	struct expr_token *expr_tok = parse_ternary(&expr_lext, errp);
 
 	if (expr_lext) {
-		set_error((lattice_error) {
-			.line = *line,
-			.code = LATTICE_SYNTAX_ERROR,
-			.message = astrdup("extra tokens in expression"),
-		});
+		set_error(errp, *line, LATTICE_SYNTAX_ERROR, "extra tokens in expression");
 
 		free_expr_lexeme(expr_lex);
 		free_expr_token(expr_tok);
@@ -845,11 +868,8 @@ static struct expr_token *parse_expr(
 	free_expr_lexeme(expr_lex);
 
 	if (!expr_tok)
-		set_error((lattice_error) {
-			.line = *line,
-			.code = LATTICE_SYNTAX_ERROR,
-			.message = astrdup("unterminated expression in substitution"),
-		});
+		set_error(errp, *line,
+			LATTICE_SYNTAX_ERROR, "unterminated expression in substitution");
 
 	return expr_tok;
 }
@@ -902,7 +922,8 @@ static bool value_eq(const void *lhs, const void *rhs, lattice_iface iface) {
 static void *eval_expr(
 	const struct expr_token *expr,
 	const void *ctx,
-	lattice_iface iface
+	lattice_iface iface,
+	lattice_error **errp
 ) {
 	void *lhs, *rhs, *ref;
 	lattice_value value = {};
@@ -927,7 +948,7 @@ static void *eval_expr(
 		case EXPR_ARRAY: {}
 			void *array = iface.create(LATTICE_TYPE_ARRAY, value);
 			for (struct expr_token *v = expr->item[0].expr; v; v = v->next) {
-				void *ve = eval_expr(v, ctx, iface);
+				void *ve = eval_expr(v, ctx, iface, errp);
 				if (!ve) {
 					iface.free(array);
 					return NULL;
@@ -942,7 +963,7 @@ static void *eval_expr(
 			void *object = iface.create(LATTICE_TYPE_OBJECT, value);
 			struct expr_token *v = expr->item[1].expr;
 			for (struct expr_token *k = expr->item[0].expr; k; k = k->next) {
-				void *ke = eval_expr(k, ctx, iface);
+				void *ke = eval_expr(k, ctx, iface, errp);
 				if (!ke) {
 					iface.free(object);
 					return NULL;
@@ -954,7 +975,7 @@ static void *eval_expr(
 						continue;
 
 					case LATTICE_TYPE_STRING: {}
-						void *ve = eval_expr(v, ctx, iface);
+						void *ve = eval_expr(v, ctx, iface, errp);
 						if (!ve) {
 							iface.free(object); iface.free(ke);
 							return NULL;
@@ -966,11 +987,8 @@ static void *eval_expr(
 						continue;
 
 					default:
-						set_error((lattice_error) {
-							.line = k->line,
-							.code = LATTICE_TYPE_ERROR,
-							.message = astrdup("object key must be string or null"),
-						});
+						set_error(errp, k->line,
+							LATTICE_TYPE_ERROR, "object key must be string or null");
 
 						iface.free(object); iface.free(ke);
 						return NULL;
@@ -981,20 +999,20 @@ static void *eval_expr(
 
 		case EXPR_EITHER:
 		case EXPR_BOTH:
-			lhs = eval_expr(expr->item[0].expr, ctx, iface);
+			lhs = eval_expr(expr->item[0].expr, ctx, iface, errp);
 			if (!lhs) return NULL;
 
 			if ((expr->type == EXPR_EITHER) == value_truthy(lhs, iface)) return lhs;
 
 			iface.free(lhs);
-			return eval_expr(expr->item[1].expr, ctx, iface);
+			return eval_expr(expr->item[1].expr, ctx, iface, errp);
 
 		case EXPR_EQ:
 		case EXPR_NEQ:
-			lhs = eval_expr(expr->item[0].expr, ctx, iface);
+			lhs = eval_expr(expr->item[0].expr, ctx, iface, errp);
 			if (!lhs) return NULL;
 
-			rhs = eval_expr(expr->item[1].expr, ctx, iface);
+			rhs = eval_expr(expr->item[1].expr, ctx, iface, errp);
 			if (!rhs) {
 				iface.free(lhs);
 				return NULL;
@@ -1009,21 +1027,18 @@ static void *eval_expr(
 		case EXPR_LTE:
 		case EXPR_LT:
 		case EXPR_GTE:
-			lhs = eval_expr(expr->item[0].expr, ctx, iface);
+			lhs = eval_expr(expr->item[0].expr, ctx, iface, errp);
 			if (!lhs) return NULL;
 
-			rhs = eval_expr(expr->item[1].expr, ctx, iface);
+			rhs = eval_expr(expr->item[1].expr, ctx, iface, errp);
 			if (!rhs) {
 				iface.free(lhs);
 				return NULL;
 			}
 
 			if (iface.type(lhs) != iface.type(rhs)) {
-				set_error((lattice_error) {
-					.line = expr->line,
-					.code = LATTICE_TYPE_ERROR,
-					.message = astrdup("can only compare similar types"),
-				});
+				set_error(errp, expr->line,
+					LATTICE_TYPE_ERROR, "can only compare similar types");
 
 				iface.free(lhs); iface.free(rhs);
 				return NULL;
@@ -1033,11 +1048,8 @@ static void *eval_expr(
 				iface.type(lhs) != LATTICE_TYPE_NUMBER &&
 				iface.type(lhs) != LATTICE_TYPE_STRING
 			) {
-				set_error((lattice_error) {
-					.line = expr->line,
-					.code = LATTICE_TYPE_ERROR,
-					.message = astrdup("can only compare number or string"),
-				});
+				set_error(errp, expr->line,
+					LATTICE_TYPE_ERROR, "can only compare number or string");
 
 				iface.free(lhs); iface.free(rhs);
 				return NULL;
@@ -1062,7 +1074,7 @@ static void *eval_expr(
 		case EXPR_QUOT:
 		case EXPR_MOD:
 		case EXPR_EXP:
-			lhs = eval_expr(expr->item[0].expr, ctx, iface);
+			lhs = eval_expr(expr->item[0].expr, ctx, iface, errp);
 			if (!lhs) return NULL;
 
 			bool bat_lhs_seq =
@@ -1073,17 +1085,14 @@ static void *eval_expr(
 				iface.type(lhs) != LATTICE_TYPE_NUMBER &&
 				!(bat_lhs_seq && (expr->type == EXPR_ADD || expr->type == EXPR_MUL))
 			) {
-				set_error((lattice_error) {
-					.line = expr->item[0].expr->line,
-					.code = LATTICE_TYPE_ERROR,
-					.message = astrdup("operands must be numbers"),
-				});
+				set_error(errp, expr->item[0].expr->line,
+					LATTICE_TYPE_ERROR, "operands must be numbers");
 
 				iface.free(lhs);
 				return NULL;
 			}
 
-			rhs = eval_expr(expr->item[1].expr, ctx, iface);
+			rhs = eval_expr(expr->item[1].expr, ctx, iface, errp);
 			if (!rhs) {
 				iface.free(lhs);
 				return NULL;
@@ -1093,11 +1102,8 @@ static void *eval_expr(
 				!(bat_lhs_seq && expr->type == EXPR_ADD) &&
 				iface.type(rhs) != LATTICE_TYPE_NUMBER
 			) {
-				set_error((lattice_error) {
-					.line = expr->item[1].expr->line,
-					.code = LATTICE_TYPE_ERROR,
-					.message = astrdup("operands must be numbers"),
-				});
+				set_error(errp, expr->item[1].expr->line,
+					LATTICE_TYPE_ERROR, "operands must be numbers");
 
 				iface.free(lhs); iface.free(rhs);
 				return NULL;
@@ -1105,11 +1111,8 @@ static void *eval_expr(
 
 			if (bat_lhs_seq && expr->type == EXPR_ADD) {
 				if (iface.type(lhs) != iface.type(rhs)) {
-					set_error((lattice_error) {
-						.line = expr->line,
-						.code = LATTICE_TYPE_ERROR,
-						.message = astrdup("sequence concatenation requires similar types"),
-					});
+					set_error(errp, expr->line,
+						LATTICE_TYPE_ERROR, "sequence concatenation requires similar types");
 
 					iface.free(lhs); iface.free(rhs);
 					return NULL;
@@ -1142,11 +1145,8 @@ static void *eval_expr(
 				}
 			} else if (bat_lhs_seq && expr->type == EXPR_MUL) {
 				if (fmod(iface.value(rhs).number, 1.0) != 0.0) {
-					set_error((lattice_error) {
-						.line = expr->item[1].expr->line,
-						.code = LATTICE_VALUE_ERROR,
-						.message = astrdup("sequence multiplication rhs must be whole"),
-					});
+					set_error(errp, expr->item[1].expr->line,
+						LATTICE_VALUE_ERROR, "sequence multiplication rhs must be whole");
 
 					iface.free(lhs); iface.free(rhs);
 					return NULL;
@@ -1198,54 +1198,42 @@ static void *eval_expr(
 		case EXPR_AND:
 		case EXPR_OR:
 		case EXPR_XOR:
-			lhs = eval_expr(expr->item[0].expr, ctx, iface);
+			lhs = eval_expr(expr->item[0].expr, ctx, iface, errp);
 			if (!lhs) return NULL;
 
 			if (iface.type(lhs) != LATTICE_TYPE_NUMBER) {
-				set_error((lattice_error) {
-					.line = expr->item[0].expr->line,
-					.code = LATTICE_TYPE_ERROR,
-					.message = astrdup("bitwise operands must be numbers"),
-				});
+				set_error(errp, expr->item[0].expr->line,
+					LATTICE_TYPE_ERROR, "bitwise operands must be numbers");
 
 				iface.free(lhs);
 				return NULL;
 			}
 
 			if (fmod(iface.value(lhs).number, 1.0) != 0.0) {
-				set_error((lattice_error) {
-					.line = expr->item[0].expr->line,
-					.code = LATTICE_VALUE_ERROR,
-					.message = astrdup("bitwise operands must be whole numbers"),
-				});
+				set_error(errp, expr->item[0].expr->line,
+					LATTICE_VALUE_ERROR, "bitwise operands must be whole numbers");
 
 				iface.free(lhs);
 				return NULL;
 			}
 
-			rhs = eval_expr(expr->item[1].expr, ctx, iface);
+			rhs = eval_expr(expr->item[1].expr, ctx, iface, errp);
 			if (!rhs) {
 				iface.free(lhs);
 				return NULL;
 			}
 
 			if (iface.type(rhs) != LATTICE_TYPE_NUMBER) {
-				set_error((lattice_error) {
-					.line = expr->item[1].expr->line,
-					.code = LATTICE_TYPE_ERROR,
-					.message = astrdup("bitwise operands must be numbers"),
-				});
+				set_error(errp, expr->item[1].expr->line,
+					LATTICE_TYPE_ERROR, "bitwise operands must be numbers");
 
 				iface.free(lhs); iface.free(rhs);
 				return NULL;
 			}
 
 			if (fmod(iface.value(rhs).number, 1.0) != 0.0) {
-				set_error((lattice_error) {
-					.line = expr->item[1].expr->line,
-					.code = LATTICE_VALUE_ERROR,
-					.message = astrdup("bitwise operands must be whole numbers"),
-				});
+				set_error(errp, expr->item[1].expr->line,
+					LATTICE_VALUE_ERROR, "bitwise operands must be whole numbers");
 
 				iface.free(lhs); iface.free(rhs);
 				return NULL;
@@ -1268,26 +1256,20 @@ static void *eval_expr(
 			return iface.create(LATTICE_TYPE_NUMBER, bbw_number);
 
 		case EXPR_COMP:
-			lhs = eval_expr(expr->item[0].expr, ctx, iface);
+			lhs = eval_expr(expr->item[0].expr, ctx, iface, errp);
 			if (!lhs) return NULL;
 
 			if (iface.type(lhs) != LATTICE_TYPE_NUMBER) {
-				set_error((lattice_error) {
-					.line = expr->item[0].expr->line,
-					.code = LATTICE_TYPE_ERROR,
-					.message = astrdup("bitwise operands must be numbers"),
-				});
+				set_error(errp, expr->item[0].expr->line,
+					LATTICE_TYPE_ERROR, "bitwise operands must be numbers");
 
 				iface.free(lhs);
 				return NULL;
 			}
 
 			if (fmod(iface.value(lhs).number, 1.0) != 0.0) {
-				set_error((lattice_error) {
-					.line = expr->item[0].expr->line,
-					.code = LATTICE_VALUE_ERROR,
-					.message = astrdup("bitwise operands must be whole numbers"),
-				});
+				set_error(errp, expr->item[0].expr->line,
+					LATTICE_VALUE_ERROR, "bitwise operands must be whole numbers");
 
 				iface.free(lhs);
 				return NULL;
@@ -1300,7 +1282,7 @@ static void *eval_expr(
 			return iface.create(LATTICE_TYPE_NUMBER, comp_number);
 
 		case EXPR_NOT:
-			lhs = eval_expr(expr->item[0].expr, ctx, iface);
+			lhs = eval_expr(expr->item[0].expr, ctx, iface, errp);
 			if (!lhs) return NULL;
 
 			bool not_value = !value_truthy(lhs, iface);
@@ -1311,15 +1293,12 @@ static void *eval_expr(
 
 		case EXPR_NEG:
 		case EXPR_POS:
-			lhs = eval_expr(expr->item[0].expr, ctx, iface);
+			lhs = eval_expr(expr->item[0].expr, ctx, iface, errp);
 			if (!lhs) return NULL;
 
 			if (iface.type(lhs) != LATTICE_TYPE_NUMBER) {
-				set_error((lattice_error) {
-					.line = expr->line,
-					.code = LATTICE_TYPE_ERROR,
-					.message = astrdup("operand must be number"),
-				});
+				set_error(errp, expr->line,
+					LATTICE_TYPE_ERROR, "operand must be number");
 
 				iface.free(lhs);
 				return NULL;
@@ -1338,15 +1317,12 @@ static void *eval_expr(
 		case EXPR_IDENT:
 		case EXPR_LOOKUP:
 			if (expr->type == EXPR_IDENT) lhs = (void *) ctx;
-			else lhs = eval_expr(expr->item[0].expr, ctx, iface);
+			else lhs = eval_expr(expr->item[0].expr, ctx, iface, errp);
 
 			if (!lhs) return NULL;
 			if (iface.type(lhs) != LATTICE_TYPE_OBJECT) {
-				set_error((lattice_error) {
-					.line = expr->line,
-					.code = LATTICE_TYPE_ERROR,
-					.message = astrdup("can only lookup properties of object"),
-				});
+				set_error(errp, expr->line,
+					LATTICE_TYPE_ERROR, "can only lookup properties of object");
 
 				if (expr->type == EXPR_LOOKUP) iface.free(lhs);
 				return NULL;
@@ -1356,14 +1332,14 @@ static void *eval_expr(
 			void *value = iface.get(lhs, index);
 
 			if (!value) {
-				set_error((lattice_error) {
-					.line = expr->line,
-					.code = LATTICE_NAME_ERROR,
-					.message = format(
+				lattice_error *err = set_error(errp, expr->line, LATTICE_NAME_ERROR, "");
+				if (err) {
+					free(err->message);
+					err->message = format(
 						"'%s' is undefined",
 						expr->item[expr->type == EXPR_IDENT ? 0 : 1].ident
-					),
-				});
+					);
+				}
 
 				if (expr->type == EXPR_LOOKUP) iface.free(lhs);
 				return NULL;
@@ -1378,10 +1354,10 @@ static void *eval_expr(
 			return NULL;
 
 		case EXPR_INDEX:
-			lhs = eval_expr(expr->item[0].expr, ctx, iface);
+			lhs = eval_expr(expr->item[0].expr, ctx, iface, errp);
 			if (!lhs) return NULL;
 
-			rhs = eval_expr(expr->item[1].expr, ctx, iface);
+			rhs = eval_expr(expr->item[1].expr, ctx, iface, errp);
 			if (!rhs) {
 				iface.free(lhs);
 				return NULL;
@@ -1391,22 +1367,16 @@ static void *eval_expr(
 				case LATTICE_TYPE_STRING:
 				case LATTICE_TYPE_ARRAY:
 					if (iface.type(rhs) != LATTICE_TYPE_NUMBER) {
-						set_error((lattice_error) {
-							.line = expr->item[1].expr->line,
-							.code = LATTICE_TYPE_ERROR,
-							.message = astrdup("index must be a number"),
-						});
+						set_error(errp, expr->item[1].expr->line,
+							LATTICE_TYPE_ERROR, "index must be a number");
 
 						iface.free(lhs); iface.free(rhs);
 						return NULL;
 					}
 
 					if (fmod(iface.value(rhs).number, 1.0) != 0.0) {
-						set_error((lattice_error) {
-							.line = expr->item[1].expr->line,
-							.code = LATTICE_VALUE_ERROR,
-							.message = astrdup("indices must be whole numbers"),
-						});
+						set_error(errp, expr->item[1].expr->line,
+							LATTICE_VALUE_ERROR, "indices must be whole numbers");
 
 						iface.free(lhs); iface.free(rhs);
 						return NULL;
@@ -1414,11 +1384,8 @@ static void *eval_expr(
 
 					size_t i = (size_t) iface.value(rhs).number;
 					if (i >= iface.length(lhs)) {
-						set_error((lattice_error) {
-							.line = expr->item[1].expr->line,
-							.code = LATTICE_VALUE_ERROR,
-							.message = astrdup("index out of range"),
-						});
+						set_error(errp, expr->item[1].expr->line,
+							LATTICE_VALUE_ERROR, "index out of range");
 
 						iface.free(lhs); iface.free(rhs);
 						return NULL;
@@ -1443,11 +1410,8 @@ static void *eval_expr(
 
 				case LATTICE_TYPE_OBJECT:
 					if (iface.type(rhs) != LATTICE_TYPE_STRING) {
-						set_error((lattice_error) {
-							.line = expr->item[1].expr->line,
-							.code = LATTICE_TYPE_ERROR,
-							.message = astrdup("index must be a string"),
-						});
+						set_error(errp, expr->item[1].expr->line,
+							LATTICE_TYPE_ERROR, "index must be a string");
 
 						iface.free(lhs); iface.free(rhs);
 						return NULL;
@@ -1458,11 +1422,8 @@ static void *eval_expr(
 					iface.free(lhs); iface.free(rhs);
 
 					if (!value) {
-						set_error((lattice_error) {
-							.line = expr->item[1].expr->line,
-							.code = LATTICE_VALUE_ERROR,
-							.message = astrdup("index out of range"),
-						});
+						set_error(errp, expr->item[1].expr->line,
+							LATTICE_VALUE_ERROR, "index out of range");
 
 						iface.free(value);
 						return NULL;
@@ -1471,23 +1432,20 @@ static void *eval_expr(
 					return value;
 
 				default:
-					set_error((lattice_error) {
-						.line = expr->line,
-						.code = LATTICE_TYPE_ERROR,
-						.message = astrdup("can only index string, array, or object"),
-					});
+					set_error(errp, expr->line,
+						LATTICE_TYPE_ERROR, "can only index string, array, or object");
 
 					iface.free(lhs);
 					return NULL;
 			}
 
 		case EXPR_TERNARY: {}
-			void *cond_value = eval_expr(expr->item[0].expr, ctx, iface);
+			void *cond_value = eval_expr(expr->item[0].expr, ctx, iface, errp);
 			if (!cond_value) return NULL;
 			bool cond = value_truthy(cond_value, iface);
 
 			iface.free(cond_value);
-			return eval_expr(expr->item[cond ? 1 : 2].expr, ctx, iface);
+			return eval_expr(expr->item[cond ? 1 : 2].expr, ctx, iface, errp);
 	}
 }
 
@@ -1502,11 +1460,7 @@ static void *eval_expr(
 }
 
 #define LEX_ERR(msg) { \
-	set_error((lattice_error) { \
-		.line = line, \
-		.code = LATTICE_SYNTAX_ERROR, \
-		.message = astrdup(msg), \
-	}); \
+	set_error(errp, line, LATTICE_SYNTAX_ERROR, msg); \
 	free_token(tokf); \
 	return NULL; \
 }
@@ -1526,7 +1480,7 @@ static struct {
 	{ "end",     TOKEN_END },
 };
 
-static struct token *lex(const char *src) {
+static struct token *lex(const char *src, lattice_error **errp) {
 	const char *cspan = src;
 	struct token *tok = NULL, *tokf = NULL, **tokp = &tokf;
 	int line = 1;
@@ -1557,7 +1511,7 @@ static struct token *lex(const char *src) {
 					case '[':
 					case '{': {}
 						char sub_term[2] = { c + 2, 0 };
-						struct expr_token *sub_tok = parse_expr(&src, sub_term, &line);
+						struct expr_token *sub_tok = parse_expr(&src, sub_term, &line, errp);
 						if (!sub_tok) {
 							free_token(tokf);
 							return NULL;
@@ -1615,7 +1569,7 @@ static struct token *lex(const char *src) {
 							case TOKEN_SWITCH:
 							case TOKEN_CASE:
 							case TOKEN_WITH: {}
-								struct expr_token *flow_tok = parse_expr(&src, ":", &line);
+								struct expr_token *flow_tok = parse_expr(&src, ":", &line, errp);
 								if (!flow_tok) {
 									free_token(tokf);
 									return NULL;
@@ -1658,7 +1612,7 @@ static struct token *lex(const char *src) {
 								}
 
 								if (tok->type == TOKEN_FOR_RANGE_EXC) {
-									struct expr_token *low_tok = parse_expr(&src, "..", &line);
+									struct expr_token *low_tok = parse_expr(&src, "..", &line, errp);
 									if (!low_tok) {
 										free_token(tokf);
 										return NULL;
@@ -1674,7 +1628,7 @@ static struct token *lex(const char *src) {
 										tok->type = TOKEN_FOR_RANGE_INC;
 									}
 
-									struct expr_token *high_tok = parse_expr(&src, ":", &line);
+									struct expr_token *high_tok = parse_expr(&src, ":", &line, errp);
 									if (!high_tok) {
 										free_token(tokf);
 										return NULL;
@@ -1682,7 +1636,7 @@ static struct token *lex(const char *src) {
 
 									tok->expr[1] = high_tok;
 								} else {
-									struct expr_token *iter_tok = parse_expr(&src, ":", &line);
+									struct expr_token *iter_tok = parse_expr(&src, ":", &line, errp);
 									if (!iter_tok) {
 										free_token(tokf);
 										return NULL;
@@ -1719,7 +1673,7 @@ static struct token *lex(const char *src) {
 	return tokf;
 }
 
-static void *parse_level(struct token **tokp) {
+static void *parse_level(struct token **tokp, lattice_error **errp) {
 	struct token *parent = (*tokp)->prev;
 	if (parent) parent->child = *tokp;
 
@@ -1746,7 +1700,7 @@ static void *parse_level(struct token **tokp) {
 					if ((*tokp)->type == TOKEN_CASE || (*tokp)->type == TOKEN_DEFAULT) {
 						*tokp = (*tokp)->next;
 						(*tokp)->prev->next = NULL;
-						if (!parse_level(tokp)) return NULL;
+						if (!parse_level(tokp, errp)) return NULL;
 					}
 
 					if ((*tokp)->type == TOKEN_END) {
@@ -1765,11 +1719,8 @@ static void *parse_level(struct token **tokp) {
 			case TOKEN_CASE:
 			case TOKEN_DEFAULT:
 				if (parent->type != TOKEN_CASE && parent->type != TOKEN_DEFAULT) {
-					set_error((lattice_error) {
-						.line = (*tokp)->line,
-						.code = LATTICE_SYNTAX_ERROR,
-						.message = astrdup("case outside of switch"),
-					});
+					set_error(errp, (*tokp)->line,
+						LATTICE_SYNTAX_ERROR, "case outside of switch");
 
 					return NULL;
 				}
@@ -1782,11 +1733,8 @@ static void *parse_level(struct token **tokp) {
 
 			case TOKEN_END:
 				if (!parent) {
-					set_error((lattice_error) {
-						.line = (*tokp)->line,
-						.code = LATTICE_SYNTAX_ERROR,
-						.message = astrdup("unexpected block terminator"),
-					});
+					set_error(errp, (*tokp)->line,
+						LATTICE_SYNTAX_ERROR, "unexpected block terminator");
 
 					return NULL;
 				}
@@ -1815,17 +1763,13 @@ static void *parse_level(struct token **tokp) {
 				}
 			default:
 				*tokp = (*tokp)->next;
-				if (!parse_level(tokp)) return NULL;
+				if (!parse_level(tokp, errp)) return NULL;
 				break;
 		}
 	}
 
 	if (parent) {
-		set_error((lattice_error) {
-			.line = -1,
-			.code = LATTICE_SYNTAX_ERROR,
-			.message = astrdup("unexpected end of file"),
-		});
+		set_error(errp, 0, LATTICE_SYNTAX_ERROR, "unexpected end of file");
 
 		return NULL;
 	}
@@ -1841,13 +1785,15 @@ struct include_stack {
 static struct token *parse(
 	const char *src,
 	lattice_opts opts,
-	struct include_stack *stack
+	struct include_stack *stack,
+	lattice_error **errp
 );
 
 static void *parse_resolve(
 	struct token *tok,
 	lattice_opts opts,
-	struct include_stack *stack
+	struct include_stack *stack,
+	lattice_error **errp
 ) {
 	for (; tok; tok = tok->next) {
 		if (tok->type == TOKEN_INCLUDE) {
@@ -1888,11 +1834,8 @@ static void *parse_resolve(
 					}
 
 					if (!resolved) {
-						set_error((lattice_error) {
-							.line = tok->line,
-							.code = LATTICE_INCLUDE_ERROR,
-							.message = astrdup("failed to resolve include"),
-						});
+						set_error(errp, tok->line,
+							LATTICE_INCLUDE_ERROR, "failed to resolve include");
 
 						return NULL;
 					}
@@ -1900,11 +1843,12 @@ static void *parse_resolve(
 
 				for (struct include_stack *part = stack; part; part = part->below) {
 					if (part->name && strcmp(part->name, resolved) == 0) {
-						set_error((lattice_error) {
-							.line = tok->line,
-							.code = LATTICE_INCLUDE_ERROR,
-							.message = format("recursive include of '%s'", resolved),
-						});
+						lattice_error *err = set_error(errp, tok->line,
+							LATTICE_INCLUDE_ERROR, "");
+						if (err) {
+							free(err->message);
+							err->message = format("recursive include of '%s'", resolved);
+						}
 
 						free(resolved);
 						return NULL;
@@ -1915,11 +1859,8 @@ static void *parse_resolve(
 			if (resolved) {
 				struct stat statbuf;
 				if (stat(resolved, &statbuf) == -1) {
-					set_error((lattice_error) {
-						.line = tok->line,
-						.code = LATTICE_INCLUDE_ERROR,
-						.message = astrdup("failed to stat include"),
-					});
+					set_error(errp, tok->line,
+						LATTICE_INCLUDE_ERROR, "failed to stat include");
 
 					free(resolved);
 					return NULL;
@@ -1927,11 +1868,8 @@ static void *parse_resolve(
 
 				int fd = open(resolved, O_RDONLY);
 				if (fd == -1) {
-					set_error((lattice_error) {
-						.line = tok->line,
-						.code = LATTICE_INCLUDE_ERROR,
-						.message = astrdup("failed to open include"),
-					});
+					set_error(errp, tok->line,
+						LATTICE_INCLUDE_ERROR, "failed to open include");
 
 					free(resolved);
 					return NULL;
@@ -1941,11 +1879,8 @@ static void *parse_resolve(
 				src[statbuf.st_size] = 0;
 
 				if (read(fd, src, statbuf.st_size) == -1) {
-					set_error((lattice_error) {
-						.line = tok->line,
-						.code = LATTICE_INCLUDE_ERROR,
-						.message = astrdup("failed to read include"),
-					});
+					set_error(errp, tok->line,
+						LATTICE_INCLUDE_ERROR, "failed to read include");
 
 					free(resolved);
 					free(src);
@@ -1956,11 +1891,8 @@ static void *parse_resolve(
 			} else {
 				src = opts.resolve(tok->ident);
 				if (!src) {
-					set_error((lattice_error) {
-						.line = tok->line,
-						.code = LATTICE_INCLUDE_ERROR,
-						.message = astrdup("failed to resolve include"),
-					});
+					set_error(errp, tok->line,
+						LATTICE_INCLUDE_ERROR, "failed to resolve include");
 
 					return NULL;
 				}
@@ -1971,14 +1903,14 @@ static void *parse_resolve(
 				.below = stack,
 			};
 
-			tok->child = parse(src, opts, resolved ? &new_stack : stack);
+			tok->child = parse(src, opts, resolved ? &new_stack : stack, errp);
 
 			free(resolved);
 			free(src);
 
 			if (!tok->child) return NULL;
 		} else {
-			if (!parse_resolve(tok->child, opts, stack)) return NULL;
+			if (!parse_resolve(tok->child, opts, stack, errp)) return NULL;
 		}
 	}
 
@@ -1988,13 +1920,14 @@ static void *parse_resolve(
 static struct token *parse(
 	const char *src,
 	lattice_opts opts,
-	struct include_stack *stack
+	struct include_stack *stack,
+	lattice_error **errp
 ) {
-	struct token *tok = lex(src), *tokt = tok;
+	struct token *tok = lex(src, errp), *tokt = tok;
 	if (!tok) return NULL;
 
-	if (!parse_level(&tokt)) return NULL;
-	if (!parse_resolve(tok, opts, stack)) return NULL;
+	if (!parse_level(&tokt, errp)) return NULL;
+	if (!parse_resolve(tok, opts, stack, errp)) return NULL;
 
 	return tok;
 }
@@ -2002,14 +1935,19 @@ static struct token *parse(
 #define EVAL_EMIT(str) { \
 	resb = emit(str, emit_ctx); \
 	if (!opts.ignore_emit_zero && resb == 0) { \
-		set_error((lattice_error) { \
-			.line = tok->line, \
-			.code = LATTICE_IO_ERROR, \
-			.message = astrdup("failed to write output"), \
-		}); \
+		set_error(errp, tok->line, \
+			LATTICE_IO_ERROR, "failed to write output"); \
 		return 0; \
 	} else { \
 		res += resb; \
+	} \
+}
+#define EVAL_SUB(tok, ctx, ...) { \
+	res += eval(tok, ctx, emit, emit_ctx, iface, opts, &err); \
+	if (err) { \
+		if (errp) *errp = err; \
+		__VA_ARGS__ \
+		return 0; \
 	} \
 }
 
@@ -2019,20 +1957,19 @@ size_t eval(
 	lattice_emit emit,
 	void *emit_ctx,
 	lattice_iface iface,
-	lattice_opts opts
+	lattice_opts opts,
+	lattice_error **errp
 ) {
 	size_t res = 0, resb;
 	bool was_if = false, end_if;
 	void *value;
+	lattice_error *err = NULL;
 
 	for (; tok; tok = tok->next) {
 		if (tok->type == TOKEN_ELIF || tok->type == TOKEN_ELSE) {
 			if (!was_if) {
-				set_error((lattice_error) {
-					.line = tok->line,
-					.code = LATTICE_SYNTAX_ERROR,
-					.message = astrdup("unexpected subclause"),
-				});
+				set_error(errp, tok->line,
+					LATTICE_SYNTAX_ERROR, "unexpected subclause");
 
 				return 0;
 			}
@@ -2047,7 +1984,7 @@ size_t eval(
 
 			case TOKEN_SUB_ESC:
 			case TOKEN_SUB_RAW:
-				value = eval_expr(tok->expr[0], ctx, iface);
+				value = eval_expr(tok->expr[0], ctx, iface, errp);
 				if (!value) return 0;
 
 				char *str = iface.type(value) != LATTICE_TYPE_STRING
@@ -2056,11 +1993,8 @@ size_t eval(
 				iface.free(value);
 
 				if (!str) {
-					set_error((lattice_error) {
-						.line = tok->line,
-						.code = LATTICE_JSON_ERROR,
-						.message = astrdup("failed to serialise substitution value"),
-					});
+					set_error(errp, tok->line,
+						LATTICE_JSON_ERROR, "failed to serialise substitution value");
 
 					return 0;
 				}
@@ -2116,69 +2050,57 @@ size_t eval(
 				break;
 
 			case TOKEN_INCLUDE:
-				if (eval(tok->child, ctx, emit, emit_ctx, iface, opts) == 0) return 0;
+				EVAL_SUB(tok->child, ctx);
 				break;
 
 			case TOKEN_IF:
-				value = eval_expr(tok->expr[0], ctx, iface);
+				value = eval_expr(tok->expr[0], ctx, iface, errp);
 				if (!value) return 0;
 
 				end_if = value_truthy(value, iface);
 				iface.free(value);
 
-				if (end_if)
-					if (eval(tok->child, ctx, emit, emit_ctx, iface, opts) == 0) return 0;
+				if (end_if) EVAL_SUB(tok->child, ctx);
 				break;
 
 			case TOKEN_ELIF:
-				value = eval_expr(tok->expr[0], ctx, iface);
+				value = eval_expr(tok->expr[0], ctx, iface, errp);
 				if (!value) return 0;
 
 				end_if = value_truthy(value, iface);
 				iface.free(value);
 
-				if (end_if)
-					if (eval(tok->child, ctx, emit, emit_ctx, iface, opts) == 0) return 0;
+				if (end_if) EVAL_SUB(tok->child, ctx);
 				break;
 
 			case TOKEN_ELSE:
-				if (eval(tok->child, ctx, emit, emit_ctx, iface, opts) == 0) return 0;
+				EVAL_SUB(tok->child, ctx);
 				break;
 
 			case TOKEN_SWITCH:
-				value = eval_expr(tok->expr[0], ctx, iface);
+				value = eval_expr(tok->expr[0], ctx, iface, errp);
 				if (!value) return 0;
 
 				for (struct token *child = tok->child; child; child = child->next) {
 					if (child->type == TOKEN_CASE) {
-						void *branch = eval_expr(child->expr[0], ctx, iface);
+						void *branch = eval_expr(child->expr[0], ctx, iface, errp);
 						bool eq = value_eq(value, branch, iface);
 						iface.free(branch);
 
 						if (eq) {
-							if (eval(child->child, ctx, emit, emit_ctx, iface, opts) == 0) {
-								iface.free(value);
-								return 0;
-							}
-
+							EVAL_SUB(child->child, ctx, iface.free(value););
 							break;
 						}
 					} else if (child->type == TOKEN_DEFAULT) {
 						if (child->next) {
-							set_error((lattice_error) {
-								.line = child->line,
-								.code = LATTICE_SYNTAX_ERROR,
-								.message = astrdup("cannot have case after default"),
-							});
+							set_error(errp, child->line,
+								LATTICE_SYNTAX_ERROR, "cannot have case after default");
 
 							iface.free(value);
 							return 0;
 						}
 
-						if (eval(child->child, ctx, emit, emit_ctx, iface, opts) == 0) {
-							iface.free(value);
-							return 0;
-						}
+						EVAL_SUB(child->child, ctx, iface.free(value););
 					}
 				}
 
@@ -2191,16 +2113,13 @@ size_t eval(
 				bool anon_for = strcmp(tok->ident, "_") == 0;
 
 				if (iface.type(ctx) != LATTICE_TYPE_OBJECT && !anon_for) {
-					set_error((lattice_error) {
-						.line = tok->line,
-						.code = LATTICE_TYPE_ERROR,
-						.message = astrdup("cannot bind in non-object scope"),
-					});
+					set_error(errp, tok->line,
+						LATTICE_TYPE_ERROR, "cannot bind in non-object scope");
 
 					return 0;
 				}
 
-				void *from = eval_expr(tok->expr[0], ctx, iface), *to = NULL;
+				void *from = eval_expr(tok->expr[0], ctx, iface, errp), *to = NULL;
 				if (!from) return 0;
 
 				if (tok->type == TOKEN_FOR_ITER) {
@@ -2211,17 +2130,14 @@ size_t eval(
 							break;
 
 						default:
-							set_error((lattice_error) {
-								.line = tok->line,
-								.code = LATTICE_TYPE_ERROR,
-								.message = astrdup("loop values must be iterable"),
-							});
+							set_error(errp, tok->line,
+								LATTICE_TYPE_ERROR, "loop values must be iterable");
 
 							iface.free(from);
 							return 0;
 					}
 				} else {
-					to = eval_expr(tok->expr[1], ctx, iface);
+					to = eval_expr(tok->expr[1], ctx, iface, errp);
 					if (!to) {
 						iface.free(from);
 						return 0;
@@ -2231,11 +2147,8 @@ size_t eval(
 						iface.type(from) != LATTICE_TYPE_NUMBER ||
 						iface.type(to) != LATTICE_TYPE_NUMBER
 					) {
-						set_error((lattice_error) {
-							.line = tok->line,
-							.code = LATTICE_TYPE_ERROR,
-							.message = astrdup("loop indices must be numbers"),
-						});
+						set_error(errp, tok->line,
+							LATTICE_TYPE_ERROR, "loop indices must be numbers");
 
 						iface.free(from);
 						iface.free(to);
@@ -2330,12 +2243,12 @@ size_t eval(
 						iface.add((void *) scope, tok->ident, bind);
 					}
 
-					resb = eval(tok->child, scope, emit, emit_ctx, iface, opts);
-					res += resb;
+					res += eval(tok->child, scope, emit, emit_ctx, iface, opts, &err);
 
 					if (!anon_for) iface.free((void *) scope);
 
-					if (resb == 0) {
+					if (err) {
+						if (errp) *errp = err;
 						free(scope_keys);
 						if (tok->type == TOKEN_FOR_ITER) iface.free(from);
 						if (from_keys) free(from_keys);
@@ -2353,10 +2266,10 @@ size_t eval(
 				break;
 
 			case TOKEN_WITH:
-				value = eval_expr(tok->expr[0], ctx, iface);
+				value = eval_expr(tok->expr[0], ctx, iface, errp);
 				if (!value) return 0;
 
-				if (eval(tok->child, value, emit, emit_ctx, iface, opts) == 0) return 0;
+				EVAL_SUB(tok->child, value);
 
 				iface.free(value);
 				break;
@@ -2379,12 +2292,13 @@ size_t lattice(
 	lattice_emit emit,
 	void *emit_ctx,
 	lattice_iface iface,
-	lattice_opts opts
+	lattice_opts opts,
+	lattice_error **errp
 ) {
-	struct token *tok = parse(template, opts, NULL);
+	struct token *tok = parse(template, opts, NULL, errp);
 	if (!tok) return 0;
 
-	size_t res = eval(tok, root, emit, emit_ctx, iface, opts);
+	size_t res = eval(tok, root, emit, emit_ctx, iface, opts, errp);
 
 	free_token(tok);
 	return res;
@@ -2399,9 +2313,10 @@ size_t lattice_file(
 	const void *root,
 	FILE *file,
 	lattice_iface iface,
-	lattice_opts opts
+	lattice_opts opts,
+	lattice_error **errp
 ) {
-	return lattice(template, root, file_emit, file, iface, opts);
+	return lattice(template, root, file_emit, file, iface, opts, errp);
 }
 
 struct buffer_ctx {
@@ -2434,10 +2349,11 @@ size_t lattice_buffer(
 	const void *root,
 	char **buffer,
 	lattice_iface iface,
-	lattice_opts opts
+	lattice_opts opts,
+	lattice_error **errp
 ) {
 	*buffer = calloc(1, 1);
 	struct buffer_ctx ctx = { .length = 0, .allocated = 1, .buffer = buffer };
 
-	return lattice(template, root, buffer_emit, &ctx, iface, opts);
+	return lattice(template, root, buffer_emit, &ctx, iface, opts, errp);
 }

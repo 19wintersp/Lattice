@@ -161,25 +161,28 @@ size_t lattice_jsonc(
 	const char *template,
 	const struct json_object *root,
 	size_t (*emit)(const char *data, void *ctx), void *ctx,
-	lattice_opts opts
+	lattice_opts opts,
+	lattice_error **errp
 ) {
-	return lattice(template, root, emit, ctx, iface, opts);
+	return lattice(template, root, emit, ctx, iface, opts, errp);
 }
 
 size_t lattice_jsonc_file(
 	const char *template,
 	const struct json_object *root,
 	FILE *file,
-	lattice_opts opts
+	lattice_opts opts,
+	lattice_error **errp
 ) {
-	return lattice_file(template, root, file, iface, opts);
+	return lattice_file(template, root, file, iface, opts, errp);
 }
 
 size_t lattice_jsonc_buffer(
 	const char *template,
 	const struct json_object *root,
 	char **buffer,
-	lattice_opts opts
+	lattice_opts opts,
+	lattice_error **errp
 ) {
-	return lattice_buffer(template, root, buffer, iface, opts);
+	return lattice_buffer(template, root, buffer, iface, opts, errp);
 }
