@@ -42,6 +42,7 @@ static char *format(const char *fmt, ...) {
 
 void lattice_error_free(lattice_error *err) {
 	if (err) {
+		free(err->file);
 		free(err->message);
 		free(err);
 	}
@@ -2050,7 +2051,7 @@ size_t eval(
 				break;
 
 			case TOKEN_INCLUDE:
-				EVAL_SUB(tok->child, ctx);
+				EVAL_SUB(tok->child, ctx, if (errp) (*errp)->file = astrdup(tok->ident););
 				break;
 
 			case TOKEN_IF:

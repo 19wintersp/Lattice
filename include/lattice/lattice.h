@@ -65,7 +65,7 @@ typedef enum lattice_error_code {
 } lattice_error_code;
 
 typedef struct lattice_error {
-	int line;
+	int line; char *file;
 	lattice_error_code code;
 	char *message;
 } lattice_error;
