@@ -35,7 +35,7 @@ clean:
 	@rm -rf build/ || true
 
 $(BIN): $(OBJS) ../lib/build/$(NAME)-$(TOOL_PARSER).o ../lib/build/$(NAME).o
-	$(CC) $(shell pkg-config --libs $(TOOL_PKG)) -o $@ $^
+	$(CC) $(shell pkg-config --libs $(TOOL_PKG)) -lm -o $@ $^
 
 build/%.o: %.c
 	$(CC) -c $(CFLAGS) $(shell pkg-config --cflags $(TOOL_PKG)) -o $@ $<
