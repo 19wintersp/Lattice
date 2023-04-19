@@ -45,7 +45,7 @@ int main(int argc, char *argv[]) {
 #if defined(TOOL_CJSON)
 	cJSON *json = cJSON_Parse(json_buf);
 #elif defined(TOOL_JSONC)
-	struct json_object *json = json_tokener_parse(src);
+	struct json_object *json = json_tokener_parse(json_buf);
 #elif defined(TOOL_JANSSON)
 	json_t *json = json_loads(json_buf, JSON_REJECT_DUPLICATES, NULL);
 #endif
