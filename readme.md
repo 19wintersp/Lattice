@@ -13,6 +13,10 @@ mind, but can be adapted for use with any textual format with minimal effort.
 
 Licensed under the MIT licence.
 
+## Documentation
+
+See [doc/](doc/index.md).
+
 ## Build instructions
 
 These instructions are designed for Linux. Other systems are not currently
