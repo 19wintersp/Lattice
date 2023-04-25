@@ -1,0 +1,6 @@
+Name: lattice-jsonc
+Version: 0.1.0
+Description: C templating engine library (JSON-C)
+URL: https://github.com/19wintersp/Lattice
+Cflags: -Ilattice
+Libs: -llattice0-jsonc
