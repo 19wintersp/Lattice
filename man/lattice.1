@@ -1,0 +1,42 @@
+.TH lattice 1 "May 2023" "LOCAL" "General Commands Manual"
+
+.SH "NAME"
+.PP
+\f[B]lattice\f[] \- Utility to run the Lattice templating engine
+
+.SH "SYNOPSIS"
+.HP 6n
+\f[B]lattice\f[] \f[I]TEMPLATE\f[]...
+
+.SH "DESCRIPTION"
+\f[B]lattice\f[] evaluates templates written in the Lattice templating language
+given JSON data provided on standard input. The templates are concatenated and
+written to standard output.
+
+.SH "OPTIONS"
+.TP 12n
+.B \-\-help
+Print help information; overrides all other options and disables normal program
+functionality.
+
+.SH "EXIT STATUS"
+.TP 12n
+.B 0
+Completed successfully.
+.TP 12n
+.B 1
+Argument error.
+.TP 12n
+.B 2
+IO error.
+.TP 12n
+.B 3
+JSON parsing error.
+.TP 12n
+.B 4
+Templating error.
+
+.SH "SEE ALSO"
+.PP
+See <\f[C]https://github.com/19wintersp/Lattice\f[]> to report bugs and see more
+detailed documentation, including for the templating language itself.
