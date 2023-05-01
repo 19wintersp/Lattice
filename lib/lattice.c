@@ -920,6 +920,288 @@ static bool value_eq(const void *lhs, const void *rhs, lattice_iface iface) {
 	return eq_value;
 }
 
+static char hash_trans[32] = "UTQFHY[J^]LVZCAD@S\\WXGPINEOBKR_M";
+uint8_t hash(const char *str) {
+	uint8_t s1 = 0, s2 = 0;
+
+	for (const char *s = str; *str; str++) {
+		if ((s - str) & 1)
+			s1 = hash_trans[s1 ^ (*str & 0x1f)] & 0x1f;
+		else
+			s2 = hash_trans[s2 ^ (*str & 0x1f)] & 0x1f;
+	}
+
+	return s1 ^ (s2 << 3);
+}
+
+enum method_id {
+	METHOD_BOOLEAN  = 0xad,
+	METHOD_CONTAINS = 0x31,
+	METHOD_FIND     = 0x3d,
+	METHOD_JOIN     = 0xc4,
+	METHOD_KEYS     = 0x2c,
+	METHOD_LENGTH   = 0xd9,
+	METHOD_LOWER    = 0x8c,
+	METHOD_NAN      = 0x34,
+	METHOD_NUMBER   = 0x7e,
+	METHOD_REAL     = 0x97,
+	METHOD_REPEAT   = 0x1d,
+	METHOD_REPLACE  = 0x58,
+	METHOD_REVERSE  = 0x76,
+	METHOD_ROUND    = 0x24,
+	METHOD_SORT     = 0xc8,
+	METHOD_STRING   = 0x50,
+	METHOD_TYPE     = 0xe5,
+	METHOD_UPPER    = 0x09,
+	METHOD_VALUES   = 0x02,
+};
+
+static struct method {
+	const char *name;
+	uint8_t length;
+} methods[256] = {
+	[METHOD_BOOLEAN]  = { "boolean",  0 },
+	[METHOD_CONTAINS] = { "contains", 1 },
+	[METHOD_FIND]     = { "find",     1 },
+	[METHOD_JOIN]     = { "join",     1 },
+	[METHOD_KEYS]     = { "keys",     0 },
+	[METHOD_LENGTH]   = { "length",   0 },
+	[METHOD_LOWER]    = { "lower",    0 },
+	[METHOD_NAN]      = { "nan",      0 },
+	[METHOD_NUMBER]   = { "number",   0 },
+	[METHOD_REAL]     = { "real",     0 },
+	[METHOD_REPEAT]   = { "repeat",   1 },
+	[METHOD_REPLACE]  = { "replace",  2 },
+	[METHOD_REVERSE]  = { "reverse",  0 },
+	[METHOD_ROUND]    = { "round",    0 },
+	[METHOD_SORT]     = { "sort",     0 },
+	[METHOD_STRING]   = { "string",   0 },
+	[METHOD_TYPE]     = { "type",     0 },
+	[METHOD_UPPER]    = { "upper",    0 },
+	[METHOD_VALUES]   = { "values",   0 },
+};
+
+static const char *types[] = {
+	[LATTICE_TYPE_NULL]    = "null",
+	[LATTICE_TYPE_BOOLEAN] = "boolean",
+	[LATTICE_TYPE_NUMBER]  = "number",
+	[LATTICE_TYPE_STRING]  = "string",
+	[LATTICE_TYPE_ARRAY]   = "array",
+	[LATTICE_TYPE_OBJECT]  = "object",
+};
+
+void *method(
+	const char *name,
+	const void *this,
+	const void *args[],
+	lattice_iface iface,
+	lattice_error **errp,
+	int line
+) {
+	uint8_t id = hash(name);
+	struct method method = methods[id];
+
+	if (!method.name || strcmp(method.name, name) != 0)
+		return iface.create(LATTICE_TYPE_NULL, (lattice_value) {});
+
+	size_t n = 0;
+	for (const void **arg = args; *arg; arg++) n++;
+
+	if (n != method.length) {
+		set_error(errp, line, LATTICE_VALUE_ERROR, n > method.length
+			? "too many arguments to method"
+			: "not enough arguments to method");
+		return NULL;
+	}
+
+	void *value;
+	switch ((enum method_id) id) {
+		case METHOD_BOOLEAN:
+			return iface.create(
+				LATTICE_TYPE_BOOLEAN,
+				(lattice_value) { .boolean = value_truthy(this, iface) }
+			);
+
+		case METHOD_CONTAINS:
+		case METHOD_FIND:
+			// different behaviour for string may be required?
+			if (iface.type(this) < LATTICE_TYPE_STRING)
+				return iface.create(LATTICE_TYPE_NULL, (lattice_value) {});
+
+			double in = -1;
+			for (size_t i = 0; i < iface.length(this); i++) {
+				if (value_eq(
+					iface.get(this, (lattice_index) { .array = i }),
+					args[0], iface
+				)) {
+					in = i;
+					break;
+				}
+			}
+
+			return id == METHOD_CONTAINS
+				? iface.create(LATTICE_TYPE_BOOLEAN, (lattice_value) { .boolean = in >= 0 })
+				: iface.create(LATTICE_TYPE_NUMBER, (lattice_value) { .number = in });
+
+		case METHOD_JOIN:
+			if (
+				iface.type(this) != LATTICE_TYPE_ARRAY ||
+				iface.type(args[0]) != LATTICE_TYPE_STRING
+			) return iface.create(LATTICE_TYPE_NULL, (lattice_value) {});
+
+			const char *joiner = iface.value(args[0]).string;
+			size_t count = iface.length(this), length = (count - 1) * strlen(joiner);
+
+			for (size_t i = 0; i < count; i++) {
+				const void *item = iface.get(this, (lattice_index) { .array = i });
+				if (iface.type(item) != LATTICE_TYPE_STRING)
+					return iface.create(LATTICE_TYPE_NULL, (lattice_value) {});
+
+				length += strlen(iface.value(item).string);
+			}
+
+			char *joined = malloc(length + 1);
+			joined[0] = 0;
+
+			for (size_t i = 0; i < count; i++) {
+				const void *item = iface.get(this, (lattice_index) { .array = i });
+				strcat(joined, iface.value(item).string);
+
+				if (i + 1 < count) strcat(joined, joiner);
+			}
+
+			value = iface.create(
+				LATTICE_TYPE_STRING,
+				(lattice_value) { .string = joined }
+			);
+
+			free(joined);
+			return value;
+
+		case METHOD_KEYS:
+		case METHOD_VALUES:
+			if (iface.type(this) < LATTICE_TYPE_ARRAY)
+				return iface.create(LATTICE_TYPE_NULL, (lattice_value) {});
+
+			value = iface.create(LATTICE_TYPE_ARRAY, (lattice_value) {});
+			size_t keys_length = iface.length(this);
+			const char **keys = NULL;
+
+			if (iface.type(this) == LATTICE_TYPE_OBJECT) {
+				keys = malloc(sizeof(const char *) * keys_length);
+				iface.keys(this, keys);
+			}
+
+			lattice_type key_type = keys ? LATTICE_TYPE_STRING : LATTICE_TYPE_NUMBER;
+			for (size_t i = 0; i < keys_length; i++) {
+				double in = i;
+				const char *key = keys ? (void *) keys[i] : *((void **) &in);
+
+				iface.add(value, NULL, id == METHOD_KEYS
+					? iface.create(key_type, (lattice_value) key)
+					: iface.clone(iface.get(this, (lattice_index) key))
+				);
+			}
+
+			free(keys);
+			return value;
+
+		case METHOD_LENGTH:
+			return iface.type(this) < LATTICE_TYPE_STRING
+				? iface.create(LATTICE_TYPE_NULL, (lattice_value) {})
+				: iface.create(
+					LATTICE_TYPE_NUMBER,
+					(lattice_value) { .number = (double) iface.length(this) }
+				);
+
+		case METHOD_LOWER:
+		case METHOD_UPPER:
+			if (iface.type(this) != LATTICE_TYPE_STRING)
+				return iface.create(LATTICE_TYPE_NULL, (lattice_value) {});
+
+			char *buf = malloc(iface.length(this) + 1);
+			strcpy(buf, iface.value(this).string);
+
+			for (size_t i = 0; buf[i]; i++)
+				buf[i] = (char) (id == METHOD_LOWER ? tolower : toupper)(buf[i]);
+
+			value = iface.create(LATTICE_TYPE_STRING, (lattice_value) { .string = buf });
+
+			free(buf);
+			return value;
+
+		case METHOD_NAN:
+			return iface.type(this) != LATTICE_TYPE_NUMBER
+				? iface.create(LATTICE_TYPE_NULL, (lattice_value) {})
+				: iface.create(
+					LATTICE_TYPE_BOOLEAN,
+					(lattice_value) { .boolean = isnan(iface.value(this).number) }
+				);
+
+		case METHOD_NUMBER: {}
+			double n;
+			switch (iface.type(this)) {
+				case LATTICE_TYPE_NULL:
+					n = 0;
+					break;
+
+				case LATTICE_TYPE_BOOLEAN:
+					n = iface.value(this).boolean;
+					break;
+
+				case LATTICE_TYPE_NUMBER:
+					n = iface.value(this).number;
+					break;
+
+				case LATTICE_TYPE_STRING:
+					n = atof(iface.value(this).string);
+					break;
+
+				default:
+					return iface.create(LATTICE_TYPE_NULL, (lattice_value) {});
+			}
+
+			return iface.create(LATTICE_TYPE_NUMBER, (lattice_value) { .number = n });
+
+		case METHOD_REAL:
+			return iface.type(this) != LATTICE_TYPE_NUMBER
+				? iface.create(LATTICE_TYPE_NULL, (lattice_value) {})
+				: iface.create(
+					LATTICE_TYPE_BOOLEAN,
+					(lattice_value) { .boolean = isfinite(iface.value(this).number) }
+				);
+
+		case METHOD_REPEAT:
+		case METHOD_REPLACE:
+		case METHOD_REVERSE:
+			return iface.create(LATTICE_TYPE_NULL, (lattice_value) {}); // todo
+
+		case METHOD_ROUND:
+			return iface.type(this) != LATTICE_TYPE_NUMBER
+				? iface.create(LATTICE_TYPE_NULL, (lattice_value) {})
+				: iface.create(
+					LATTICE_TYPE_NUMBER,
+					(lattice_value) { .number = round(iface.value(this).number) }
+				);
+
+		case METHOD_SORT:
+			return iface.create(LATTICE_TYPE_NULL, (lattice_value) {}); // todo
+
+		case METHOD_STRING: {}
+			void *json = iface.print(this);
+			value = iface.create(LATTICE_TYPE_STRING, (lattice_value) { .string = json });
+
+			free(json);
+			return value;
+
+		case METHOD_TYPE:
+			return iface.create(
+				LATTICE_TYPE_STRING,
+				(lattice_value) { .string = types[iface.type(this)] }
+			);
+	}
+}
+
 static void *eval_expr(
 	const struct expr_token *expr,
 	const void *ctx,
@@ -1350,9 +1632,31 @@ static void *eval_expr(
 			if (expr->type == EXPR_LOOKUP) iface.free(lhs);
 			return value;
 
-		case EXPR_METHOD:
-			// TODO
-			return NULL;
+		case EXPR_METHOD: {}
+			if (!(lhs = eval_expr(expr->item[0].expr, ctx, iface, errp)))
+				return NULL;
+
+			size_t n = 0, i = 0;
+			for (struct expr_token *arg = expr->item[2].expr; arg; arg = arg->next) n++;
+
+			void **args = malloc(sizeof(void *) * (n + 1));
+			args[n] = NULL;
+
+			for (struct expr_token *arg = expr->item[2].expr; arg; arg = arg->next) {
+				if (!(args[i++] = eval_expr(arg, ctx, iface, errp))) {
+					iface.free(lhs);
+					for (size_t j = 0; j < i - 1; j++) iface.free(args[j]);
+					return NULL;
+				}
+			}
+
+			value = method(
+				expr->item[1].ident, lhs, (const void **) args, iface, errp, expr->line);
+
+			iface.free(lhs);
+			for (size_t j = 0; j < n; j++) iface.free(args[j]);
+			free(args);
+			return value;
 
 		case EXPR_INDEX:
 			lhs = eval_expr(expr->item[0].expr, ctx, iface, errp);
