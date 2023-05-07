@@ -1707,10 +1707,10 @@ static void *eval_expr(
 						);
 					} else {
 						index.array = i;
-						void *value = iface.get(lhs, index);
+						void *value = iface.clone(iface.get(lhs, index));
 
 						iface.free(lhs); iface.free(rhs);
-						return iface.clone(value);
+						return value;
 					}
 
 				case LATTICE_TYPE_OBJECT:
