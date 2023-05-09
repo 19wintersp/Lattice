@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <lattice/lattice.h>
@@ -938,6 +939,7 @@ enum method_id {
 	METHOD_BOOLEAN  = 0xad,
 	METHOD_CONTAINS = 0x31,
 	METHOD_FIND     = 0x3d,
+	METHOD_FMT_TIME = 0xa4,
 	METHOD_JOIN     = 0xc4,
 	METHOD_KEYS     = 0x2c,
 	METHOD_LENGTH   = 0xd9,
@@ -963,6 +965,7 @@ static struct method {
 	[METHOD_BOOLEAN]  = { "boolean",  0 },
 	[METHOD_CONTAINS] = { "contains", 1 },
 	[METHOD_FIND]     = { "find",     1 },
+	[METHOD_FMT_TIME] = { "datetime", 0 },
 	[METHOD_JOIN]     = { "join",     1 },
 	[METHOD_KEYS]     = { "keys",     0 },
 	[METHOD_LENGTH]   = { "length",   0 },
@@ -1042,6 +1045,19 @@ void *method(
 			return id == METHOD_CONTAINS
 				? iface.create(LATTICE_TYPE_BOOLEAN, (lattice_value) { .boolean = in >= 0 })
 				: iface.create(LATTICE_TYPE_NUMBER, (lattice_value) { .number = in });
+
+		case METHOD_FMT_TIME:
+			if (iface.type(this) != LATTICE_TYPE_STRING)
+				return iface.create(LATTICE_TYPE_NULL, (lattice_value) {});
+
+			time_t timer = time(NULL);
+			char fmt_time[1024] = {};
+			strftime(fmt_time, 1024, iface.value(this).string, localtime(&timer));
+
+			return iface.create(
+				LATTICE_TYPE_STRING,
+				(lattice_value) { .string = fmt_time }
+			);
 
 		case METHOD_JOIN:
 			if (
