@@ -1172,6 +1172,38 @@ void *method(
 				);
 
 		case METHOD_REPEAT:
+			if (iface.type(args[0]) != LATTICE_TYPE_NUMBER)
+				return iface.create(LATTICE_TYPE_NULL, (lattice_value) {});
+
+			size_t repand = iface.length(this), repeat = iface.value(args[0]).number;
+			switch (iface.type(this)) {
+				case LATTICE_TYPE_STRING: {}
+					const char *src = iface.value(this).string;
+					char *new = malloc(repand * repeat + 1), *cur = new;
+					for (size_t i = 0; i < repeat; i++, cur += repand) strcpy(cur, src);
+
+					value = iface.create(
+						LATTICE_TYPE_STRING,
+						(lattice_value) { .string = new }
+					);
+					free(new);
+					return value;
+
+				case LATTICE_TYPE_ARRAY:
+					value = iface.create(LATTICE_TYPE_ARRAY, (lattice_value) {});
+					for (size_t i = 0; i < repeat; i++)
+						for (size_t j = 0; j < repand; j++)
+							iface.add(
+								value, NULL,
+								iface.clone(iface.get(this, (lattice_index) { .array = j }))
+							);
+
+					return value;
+
+				default:
+					return iface.create(LATTICE_TYPE_NULL, (lattice_value) {});
+			}
+
 		case METHOD_REPLACE:
 		case METHOD_REVERSE:
 			return iface.create(LATTICE_TYPE_NULL, (lattice_value) {}); // todo
