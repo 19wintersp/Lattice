@@ -251,7 +251,7 @@ static struct expr_lexeme *lex_expr(
 ) {
 	size_t tlen = term ? strlen(term) : 0;
 
-	struct expr_lexeme *lex, *lexf, **lexp = &lexf;
+	struct expr_lexeme *lex = NULL, *lexf = NULL, **lexp = &lexf;
 	int brackets = 0;
 
 	while (
@@ -1196,6 +1196,8 @@ void *method(
 				case LATTICE_TYPE_STRING: {}
 					const char *src = iface.value(this).string;
 					char *new = malloc(repand * repeat + 1), *cur = new;
+
+					new[0] = 0;
 					for (size_t i = 0; i < repeat; i++, cur += repand) strcpy(cur, src);
 
 					value = iface.create(
