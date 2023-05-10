@@ -2362,13 +2362,15 @@ static struct token *parse(
 }
 
 #define EVAL_EMIT(str) { \
-	resb = emit(str, emit_ctx); \
-	if (!opts.ignore_emit_zero && resb == 0) { \
-		set_error(errp, tok->line, \
-			LATTICE_IO_ERROR, "failed to write output"); \
-		return 0; \
-	} else { \
-		res += resb; \
+	if (str[0] != 0) { \
+		resb = emit(str, emit_ctx); \
+		if (!opts.ignore_emit_zero && resb == 0) { \
+			set_error(errp, tok->line, \
+				LATTICE_IO_ERROR, "failed to write output"); \
+			return 0; \
+		} else { \
+			res += resb; \
+		} \
 	} \
 }
 #define EVAL_SUB(tok, ctx, ...) { \
