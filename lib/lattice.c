@@ -689,10 +689,19 @@ static struct expr_token *parse_call(
 				return NULL;
 			}
 		} else if (PARSE_MATCH(LEX_LBRACK)) {
-			struct expr_token *index = parse_ternary(lexp, errp);
+			struct expr_token *index = parse_ternary(lexp, errp), *index2 = NULL;
 			if (!index) {
 				free_expr_token(tok);
 				return NULL;
+			}
+
+			if (PARSE_MATCH(LEX_COMMA)) {
+				index2 = parse_ternary(lexp, errp);
+				if (!index2) {
+					free_expr_token(tok);
+					free_expr_token(index);
+					return NULL;
+				}
 			}
 
 			if (!PARSE_MATCH(LEX_RBRACK)) {
@@ -701,10 +710,16 @@ static struct expr_token *parse_call(
 
 				free_expr_token(tok);
 				free_expr_token(index);
+				free_expr_token(index2);
 				return NULL;
 			}
 
-			PARSE_TOK(.type = EXPR_INDEX, .item[0].expr = tok, .item[1].expr = index);
+			PARSE_TOK(
+				.type = EXPR_INDEX,
+				.item[0].expr = tok,
+				.item[1].expr = index,
+				.item[2].expr = index2,
+			);
 		} else break;
 	}
 
@@ -1718,6 +1733,15 @@ static void *eval_expr(
 				return NULL;
 			}
 
+			void *rhs2 = expr->item[2].expr
+				? eval_expr(expr->item[2].expr, ctx, iface, errp)
+				: NULL;
+			if (expr->item[2].expr && !rhs2) {
+				iface.free(lhs);
+				iface.free(rhs);
+				return NULL;
+			}
+
 			switch (iface.type(lhs)) {
 				case LATTICE_TYPE_STRING:
 				case LATTICE_TYPE_ARRAY:
@@ -1725,7 +1749,7 @@ static void *eval_expr(
 						set_error(errp, expr->item[1].expr->line,
 							LATTICE_TYPE_ERROR, "index must be a number");
 
-						iface.free(lhs); iface.free(rhs);
+						iface.free(lhs); iface.free(rhs); iface.free(rhs2);
 						return NULL;
 					}
 
@@ -1733,37 +1757,87 @@ static void *eval_expr(
 						set_error(errp, expr->item[1].expr->line,
 							LATTICE_VALUE_ERROR, "indices must be whole numbers");
 
-						iface.free(lhs); iface.free(rhs);
+						iface.free(lhs); iface.free(rhs); iface.free(rhs2);
 						return NULL;
 					}
 
 					size_t i = (size_t) iface.value(rhs).number;
-					if (i >= iface.length(lhs)) {
-						set_error(errp, expr->item[1].expr->line,
-							LATTICE_VALUE_ERROR, "index out of range");
 
-						iface.free(lhs); iface.free(rhs);
-						return NULL;
-					}
+					if (rhs2) {
+						if (fmod(iface.value(rhs2).number, 1.0) != 0.0) {
+							set_error(errp, expr->item[2].expr->line,
+								LATTICE_VALUE_ERROR, "indices must be whole numbers");
 
-					if (iface.type(lhs) == LATTICE_TYPE_STRING) {
-						char *string = calloc(2, sizeof(char));
-						string[0] = iface.value(lhs).string[i];
+							iface.free(lhs); iface.free(rhs); iface.free(rhs2);
+							return NULL;
+						}
 
-						iface.free(lhs); iface.free(rhs);
-						return iface.create(
-							LATTICE_TYPE_STRING,
-							(lattice_value) { .string = string }
-						);
+						size_t j = (size_t) iface.value(rhs2).number;
+
+						if (i >= iface.length(lhs)) i = iface.length(lhs);
+						if (j >= iface.length(lhs)) j = iface.length(lhs);
+						if (j < i) j = i;
+
+						if (iface.type(lhs) == LATTICE_TYPE_STRING) {
+							const char *src = iface.value(lhs).string;
+							char *string = calloc(j - i + 1, sizeof(char));
+							for (size_t k = i; k < j; k++) string[k - i] = src[k];
+
+							value = iface.create(
+								LATTICE_TYPE_STRING,
+								(lattice_value) { .string = string }
+							);
+
+							iface.free(lhs); iface.free(rhs); iface.free(rhs2);
+							free(string);
+
+							return value;
+						} else {
+							value = iface.create(LATTICE_TYPE_ARRAY, (lattice_value) {});
+							for (size_t k = i; k < j; k++) {
+								index.array = k;
+								iface.add(value, NULL, iface.clone(iface.get(lhs, index)));
+							}
+
+							iface.free(lhs); iface.free(rhs); iface.free(rhs2);
+							return value;
+						}
 					} else {
-						index.array = i;
-						void *value = iface.clone(iface.get(lhs, index));
+						if (i >= iface.length(lhs)) {
+							set_error(errp, expr->item[1].expr->line,
+								LATTICE_VALUE_ERROR, "index out of range");
 
-						iface.free(lhs); iface.free(rhs);
-						return value;
+							iface.free(lhs); iface.free(rhs);
+							return NULL;
+						}
+
+						if (iface.type(lhs) == LATTICE_TYPE_STRING) {
+							char *string = calloc(2, sizeof(char));
+							string[0] = iface.value(lhs).string[i];
+
+							iface.free(lhs); iface.free(rhs);
+							return iface.create(
+								LATTICE_TYPE_STRING,
+								(lattice_value) { .string = string }
+							);
+						} else {
+							index.array = i;
+							void *value = iface.clone(iface.get(lhs, index));
+
+							iface.free(lhs); iface.free(rhs);
+							return value;
+						}
 					}
 
 				case LATTICE_TYPE_OBJECT:
+					if (rhs2) {
+						set_error(errp, expr->item[2].expr->line,
+							LATTICE_TYPE_ERROR, "cannot range-index an object");
+
+						iface.free(lhs); iface.free(rhs); iface.free(rhs2);
+						return NULL;
+					}
+
 					if (iface.type(rhs) != LATTICE_TYPE_STRING) {
 						set_error(errp, expr->item[1].expr->line,
 							LATTICE_TYPE_ERROR, "index must be a string");
@@ -1790,7 +1864,7 @@ static void *eval_expr(
 					set_error(errp, expr->line,
 						LATTICE_TYPE_ERROR, "can only index string, array, or object");
 
-					iface.free(lhs);
+					iface.free(lhs); iface.free(rhs); iface.free(rhs2);
 					return NULL;
 			}
 
