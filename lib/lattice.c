@@ -1049,7 +1049,7 @@ void *method(
 			size_t search_len;
 
 			if (iface.type(this) == LATTICE_TYPE_STRING) {
-				if (iface.type(args[0] != LATTICE_TYPE_STRING))
+				if (iface.type(args[0]) != LATTICE_TYPE_STRING)
 					return iface.create(LATTICE_TYPE_NULL, (lattice_value) {});
 
 				this_str = iface.value(this).string;
