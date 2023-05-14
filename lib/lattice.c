@@ -1775,7 +1775,9 @@ static void *eval_expr(
 						return NULL;
 					}
 
-					size_t i = (size_t) iface.value(rhs).number;
+					double rhs_number = iface.value(rhs).number;
+					if (rhs_number < 0) rhs_number += iface.length(lhs);
+					size_t i = (size_t) rhs_number;
 
 					if (rhs2) {
 						if (fmod(iface.value(rhs2).number, 1.0) != 0.0) {
@@ -1786,7 +1788,9 @@ static void *eval_expr(
 							return NULL;
 						}
 
-						size_t j = (size_t) iface.value(rhs2).number;
+						double rhs2_number = iface.value(rhs2).number;
+						if (rhs2_number < 0) rhs2_number += iface.length(lhs);
+						size_t j = (size_t) rhs2_number;
 
 						if (i >= iface.length(lhs)) i = iface.length(lhs);
 						if (j >= iface.length(lhs)) j = iface.length(lhs);
