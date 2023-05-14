@@ -1042,16 +1042,30 @@ void *method(
 
 		case METHOD_CONTAINS:
 		case METHOD_FIND:
-			// different behaviour for string may be required?
 			if (iface.type(this) < LATTICE_TYPE_STRING)
 				return iface.create(LATTICE_TYPE_NULL, (lattice_value) {});
 
+			const char *this_str = NULL, *search_str;
+			size_t search_len;
+
+			if (iface.type(this) == LATTICE_TYPE_STRING) {
+				if (iface.type(args[0] != LATTICE_TYPE_STRING))
+					return iface.create(LATTICE_TYPE_NULL, (lattice_value) {});
+
+				this_str = iface.value(this).string;
+				search_str = iface.value(args[0]).string;
+				search_len = strlen(search_str);
+			}
+
 			double in = -1;
 			for (size_t i = 0; i < iface.length(this); i++) {
-				if (value_eq(
-					iface.get(this, (lattice_index) { .array = i }),
-					args[0], iface
-				)) {
+				if (
+					this_str
+						? strncmp(this_str + i, search_str, search_len)
+						: value_eq(
+							iface.get(this, (lattice_index) { .array = i }), args[0], iface
+						)
+				) {
 					in = i;
 					break;
 				}
