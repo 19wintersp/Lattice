@@ -953,6 +953,7 @@ uint8_t hash(const char *str) {
 enum method_id {
 	METHOD_BOOLEAN  = 0xad,
 	METHOD_CONTAINS = 0x31,
+	METHOD_COUNT    = 0x3c,
 	METHOD_FIND     = 0x3d,
 	METHOD_FMT_TIME = 0xa4,
 	METHOD_JOIN     = 0xc4,
@@ -967,7 +968,9 @@ enum method_id {
 	METHOD_REVERSE  = 0x76,
 	METHOD_ROUND    = 0x24,
 	METHOD_SORT     = 0xc8,
+	METHOD_SPLIT    = 0x9d,
 	METHOD_STRING   = 0x50,
+	METHOD_TRIM     = 0x8b,
 	METHOD_TYPE     = 0xe5,
 	METHOD_UPPER    = 0x09,
 	METHOD_VALUES   = 0x02,
@@ -979,6 +982,7 @@ static struct method {
 } methods[256] = {
 	[METHOD_BOOLEAN]  = { "boolean",  0 },
 	[METHOD_CONTAINS] = { "contains", 1 },
+	[METHOD_COUNT]    = { "count",    1 },
 	[METHOD_FIND]     = { "find",     1 },
 	[METHOD_FMT_TIME] = { "datetime", 0 },
 	[METHOD_JOIN]     = { "join",     1 },
@@ -993,7 +997,9 @@ static struct method {
 	[METHOD_REVERSE]  = { "reverse",  0 },
 	[METHOD_ROUND]    = { "round",    0 },
 	[METHOD_SORT]     = { "sort",     0 },
+	[METHOD_SPLIT]    = { "split",    1 },
 	[METHOD_STRING]   = { "string",   0 },
+	[METHOD_TRIM]     = { "trim",     0 },
 	[METHOD_TYPE]     = { "type",     0 },
 	[METHOD_UPPER]    = { "upper",    0 },
 	[METHOD_VALUES]   = { "values",   0 },
@@ -1041,6 +1047,7 @@ void *method(
 			);
 
 		case METHOD_CONTAINS:
+		case METHOD_COUNT:
 		case METHOD_FIND:
 			if (iface.type(this) < LATTICE_TYPE_STRING)
 				return iface.create(LATTICE_TYPE_NULL, (lattice_value) {});
@@ -1057,23 +1064,29 @@ void *method(
 				search_len = strlen(search_str);
 			}
 
-			double in = -1;
+			double in = -1, nn = 0;
 			for (size_t i = 0; i < iface.length(this); i++) {
 				if (
 					this_str
-						? strncmp(this_str + i, search_str, search_len)
+						? strncmp(this_str + i, search_str, search_len) == 0
 						: value_eq(
 							iface.get(this, (lattice_index) { .array = i }), args[0], iface
 						)
 				) {
-					in = i;
-					break;
+					nn += 1;
+					if (in < 0) in = i;
 				}
 			}
 
 			return id == METHOD_CONTAINS
-				? iface.create(LATTICE_TYPE_BOOLEAN, (lattice_value) { .boolean = in >= 0 })
-				: iface.create(LATTICE_TYPE_NUMBER, (lattice_value) { .number = in });
+				? iface.create(
+					LATTICE_TYPE_BOOLEAN,
+					(lattice_value) { .boolean = in >= 0 }
+				)
+				: iface.create(
+					LATTICE_TYPE_NUMBER,
+					(lattice_value) { .number = id == METHOD_COUNT ? nn : in }
+				);
 
 		case METHOD_FMT_TIME:
 			if (iface.type(this) != LATTICE_TYPE_STRING)
@@ -1266,11 +1279,65 @@ void *method(
 		case METHOD_SORT:
 			return iface.create(LATTICE_TYPE_NULL, (lattice_value) {}); // todo
 
+		case METHOD_SPLIT:
+			if (
+				iface.type(this) != LATTICE_TYPE_STRING ||
+				iface.type(args[0]) != LATTICE_TYPE_STRING
+			) return iface.create(LATTICE_TYPE_NULL, (lattice_value) {});
+
+			const char *haystack = iface.value(this).string,
+				*splitter = iface.value(args[0]).string,
+				*seam = strstr(haystack, splitter);
+			size_t splitter_len = strlen(splitter);
+
+			value = iface.create(LATTICE_TYPE_ARRAY, (lattice_value) {});
+			for (;; seam = strstr(haystack, splitter)) {
+				char *segment = (char *) haystack;
+				if (seam) {
+					segment = malloc(seam - haystack + 1);
+					strncpy(segment, haystack, seam - haystack);
+					segment[seam - haystack] = 0;
+				}
+
+				iface.add(value, NULL, iface.create(
+					LATTICE_TYPE_STRING, (lattice_value) { .string = segment }
+				));
+
+				if (seam) free(segment);
+				else break;
+
+				haystack = seam + splitter_len;
+			}
+
+			return value;
+
 		case METHOD_STRING: {}
 			void *json = iface.print(this);
 			value = iface.create(LATTICE_TYPE_STRING, (lattice_value) { .string = json });
 
 			free(json);
+			return value;
+
+		case METHOD_TRIM:
+			if (iface.type(this) != LATTICE_TYPE_STRING)
+				return iface.create(LATTICE_TYPE_NULL, (lattice_value) {});
+
+			size_t og_len = iface.length(this), start = 0, end = og_len - 1;
+			const char *og_str = iface.value(this).string;
+
+			for (; start < og_len; start++) if (!isspace(og_str[start])) break;
+			for (; end > start; end--) if (!isspace(og_str[end])) break;
+
+			char *trimmed = malloc(2 + end - start);
+			strncpy(trimmed, og_str + start, 1 + end - start);
+			trimmed[1 + end - start] = 0;
+
+			value = iface.create(
+				LATTICE_TYPE_STRING,
+				(lattice_value) { .string = trimmed }
+			);
+
+			free(trimmed);
 			return value;
 
 		case METHOD_TYPE:
